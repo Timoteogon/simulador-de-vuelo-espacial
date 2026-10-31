@@ -52,16 +52,20 @@ python -m pip install -r requirements-dev.txt
 
 ## Modelo Físico y Ecuaciones
 
-### 1. Dinámica traslacional del cohete
+## 1. Dinámica traslacional del cohete
 
 El vehículo se propaga en dos dimensiones. En el marco geocéntrico, la aceleración incluye la gravedad terrestre, el empuje, el arrastre atmosférico y, cuando están habilitadas, las perturbaciones de terceros cuerpos:
 
 $$
-\ddot{\mathbf r} = -\frac{\mu_T}{r^3}\mathbf r
-+ \frac{T}{m}\hat{u}_T
-- \frac{\rho C_D A}{2m}\,|\vec v_{\mathrm{rel}}|\vec v_{\mathrm{rel}}
-+ \vec a_{\mathrm{pert}}.
+\ddot{\mathbf r} =
+-\frac{\mu_T}{r^3}\mathbf r
++\frac{T}{m}\hat{\mathbf u}_T
+-\frac{\rho C_D A}{2m}
+\|\mathbf v_{\mathrm{rel}}\|\mathbf v_{\mathrm{rel}}
++\mathbf a_{\mathrm{pert}}.
 $$
+
+Aquí, $\mathbf r$ es la posición geocéntrica, $r=\|\mathbf r\|$, $\mu_T$ es el parámetro gravitacional terrestre, $T$ es el empuje, $m$ es la masa instantánea, $\hat{\mathbf u}_T$ es la dirección del empuje, $\rho$ es la densidad atmosférica, $C_D$ es el coeficiente de arrastre y $A$ es el área de referencia. La velocidad $\mathbf v_{\mathrm{rel}}$ se mide respecto al aire.
 
 
 Aquí, $\vec r$ es la posición geocéntrica, $r=|\vec r|$, $\mu_T$ es el parámetro gravitacional terrestre, $T$ es el empuje, $m$ es la masa instantánea, $\hat{u}_T$ es la dirección del empuje, $\rho$ es la densidad atmosférica, $C_D$ es el coeficiente de arrastre y $A$ es el área de referencia. La velocidad $\vec v_{\mathrm{rel}}$ se mide respecto al aire.
