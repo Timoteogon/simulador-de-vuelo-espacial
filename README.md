@@ -1,18 +1,4 @@
-\documentclass[11pt]{article}
-\usepackage[utf8]{inputenc}
-\usepackage[T1]{fontenc}
-\usepackage[spanish,es-noshorthands]{babel}
-\usepackage[margin=2.4cm]{geometry}
-\usepackage{amsmath}
-\usepackage{booktabs}
-\usepackage{longtable}
-\usepackage{array}
-\usepackage{enumitem}
-\usepackage{url}
-\usepackage[hidelinks]{hyperref}
 
-\setlist{itemsep=2pt,topsep=4pt}
-\urlstyle{tt}
 
 \title{\textbf{Simulador de cohetes 2D}\\[4pt]\large Versión 12.13.6}
 \author{Mateo Chavarria Gonzalez}
