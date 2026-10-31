@@ -105,6 +105,14 @@ Cambios de 11.21.1 (endurecimiento; sin cambio de arquitectura):
   - Esta sección: limitaciones heredadas frente a las de la localización de
     eventos. Nada de la física cambia salvo lo del corte indicado arriba.
 
+Cambios de 12.13.7 (rendimiento y diagnóstico; la física no cambia):
+  - _k_quema: una energía objetivo no finita devuelve 1 (no convergió/no finito). En 12.13.6
+    caía en el código 3 y el planificador TLI lo contaba como "sin empuje neto".
+  - _estado_pymcel poda la caché de nodos solo cuando carga un lote (la tabla solo crece ahí).
+    La poda de 12.13.5 recorría ~144-288 nodos en cada consulta: 13.5 µs frente a 3.6 µs por
+    llamada medido en 12.13.4, que en vuelo lunar (varias consultas por paso) pesaba tanto
+    como el propio paso.
+
 Cambios de 12.13.6 (auditoría de dinámica, efemérides y robustez; sin ampliar el modelo físico):
   - _k_quema distingue no convergencia (1), combustible (2), sin empuje neto (3) y estancamiento
     de energía (4); el detector de estancamiento requiere 100 pasos sin progreso resoluble. Se
@@ -1353,25 +1361,30 @@ def _estado_pymcel(cuerpo: str, fecha_lanzamiento: str, t_sim: float,
     tabla = _EPH_CACHE[clave]
     k = math.floor(t_sim / _EPH_PASO)
     try:
+        cargado = False
         for i in (k, k + 1):
             if i not in tabla:
                 i0 = (i // _EPH_NODOS_LOTE) * _EPH_NODOS_LOTE
                 tabla.update(_eph_obtener_lote(cuerpo, fecha_lanzamiento, i0))
+                cargado = True
         # (12.13.5) Solo hacen falta los lotes que contienen k y k+1.
         # Normalmente es uno; en la frontera entre lotes son dos. Los nodos
         # eliminados pueden volver a leerse de disco en _eph_obtener_lote.
-        lotes_necesarios = {
-            (i // _EPH_NODOS_LOTE) * _EPH_NODOS_LOTE for i in (k, k + 1)
-        }
-        for indice in tuple(tabla):
-            i0 = (indice // _EPH_NODOS_LOTE) * _EPH_NODOS_LOTE
-            if i0 not in lotes_necesarios:
-                del tabla[indice]
-        # Guarda defensiva: la poda anterior debe mantener <= 2 lotes.
-        if len(tabla) > _EPH_CACHE_MAX_NODOS_POR_CLAVE:
-            raise RuntimeError(
-                f"caché de efemérides excedió {_EPH_CACHE_MAX_NODOS_POR_CLAVE} nodos "
-                f"para {clave!r}: {len(tabla)}")
+        # (12.13.7) La tabla solo crece al cargar un lote, así que solo ahí hace
+        # falta podar: antes se recorría en CADA llamada (~10 µs de más por consulta).
+        if cargado:
+            lotes_necesarios = {
+                (i // _EPH_NODOS_LOTE) * _EPH_NODOS_LOTE for i in (k, k + 1)
+            }
+            for indice in tuple(tabla):
+                i0 = (indice // _EPH_NODOS_LOTE) * _EPH_NODOS_LOTE
+                if i0 not in lotes_necesarios:
+                    del tabla[indice]
+            # Guarda defensiva: la poda anterior debe mantener <= 2 lotes.
+            if len(tabla) > _EPH_CACHE_MAX_NODOS_POR_CLAVE:
+                raise RuntimeError(
+                    f"caché de efemérides excedió {_EPH_CACHE_MAX_NODOS_POR_CLAVE} nodos "
+                    f"para {clave!r}: {len(tabla)}")
     except (KeyError, ValueError, OSError, SpiceyError) as e:
         fallos.add(clave)
         nombre = type(e).__name__
@@ -3364,6 +3377,8 @@ def _k_quema(x, y, vx, vy, t, m, u0, D, a_sal_p, m_seca, eps_obj, hh, tau,
     paso final fraccionado. Devuelve (x, y, vx, vy, t, m, estado):
     0 = correcto, 1 = no convergió/no finito, 2 = sin combustible,
     3 = sin empuje neto, 4 = energía estancada durante 100 pasos."""
+    if not math.isfinite(eps_obj):
+        return x, y, vx, vy, t, m, 1         # (12.13.7) objetivo no finito: no es "sin empuje neto"
     n_estancado = 0
     for _ in range(200000):
         r = math.sqrt((x) * (x) + (y) * (y))
