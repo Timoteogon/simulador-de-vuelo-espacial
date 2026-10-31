@@ -1,2 +1,7 @@
-numpy>=1.24
-matplotlib>=3.7
+astropy==6.1.0
+matplotlib==3.8.4
+numba==0.59.1
+numpy==1.26.4
+pymcel==1.0.3
+scipy==1.13.0
+spiceypy==6.0.0
