@@ -105,6 +105,17 @@ Cambios de 11.21.1 (endurecimiento; sin cambio de arquitectura):
   - Esta sección: limitaciones heredadas frente a las de la localización de
     eventos. Nada de la física cambia salvo lo del corte indicado arriba.
 
+Cambios de 12.13.8 (efemérides lunares; el vuelo no cambia):
+  - Carga de SPICE: pymcel 0.9.25 solo hace `furnsh` en `consulta_spice` si `pymcel/data/kernels.txt`
+    NO existe, y `_preparar_datos_pymcel` lo crea antes, así que en un proceso nuevo SPICE fallaba con
+    MISSINGTIMEINFO y se caía a Kepler. `_asegurar_kernels_spice()` descarga los kernels grandes si faltan
+    y los carga una vez por proceso; `_eph_cargar_lote` la llama antes de consultar.
+  - Nuevo `_ProveedorRebound` (`efemerides_lunar="rebound"`, ahora por defecto): tabla de Sol y Luna
+    geocéntricos con REBOUND/IAS15 y planetas (con SPICE; sin SPICE usa Horizons y no incluye planetas).
+    Contra SPICE a 10 d (2026-01-01): Luna 0,33 km, Sol 0,07 km (Verlet: 0,44 km y 11 500 km, por no
+    incluir el vaivén de la Tierra). "spice" y "horizons_verlet" siguen disponibles. Exige `pip install rebound`.
+  - La casilla de la GUI desmarcada elige "rebound" (antes "horizons_verlet").
+
 Cambios de 12.13.7 (rendimiento y diagnóstico; la física no cambia):
   - _k_quema: una energía objetivo no finita devuelve 1 (no convergió/no finito). En 12.13.6
     caía en el código 3 y el planificador TLI lo contaba como "sin empuje neto".
@@ -795,6 +806,7 @@ import json
 import math
 import multiprocessing
 import argparse
+import glob
 import os
 import re
 import sys
@@ -869,6 +881,7 @@ with (contextlib.redirect_stdout(io.StringIO())
       else contextlib.nullcontext()):
     import pymcel as pc
 from astropy.time import Time
+import spiceypy as spy
 from spiceypy import SpiceyError
 from pymcel.constantes import (mu_earth as MU_T, R_earth as R_T,
                                mu_sun as MU_SOL, mu_moon as MU_LUNA)
@@ -1157,6 +1170,26 @@ def _preparar_datos_pymcel() -> None:
             shutil.copy2(src, dst)
 
 
+_SPICE_LISTO = False     # (12.13.8) ¿ya se cargaron (furnsh) los kernels en ESTE proceso?
+
+
+def _asegurar_kernels_spice() -> None:
+    """(12.13.8) pymcel 0.9.25 solo descarga y carga (`furnsh`) los kernels dentro de
+    `consulta_spice` si `pymcel/data/kernels.txt` NO existe, y `_preparar_datos_pymcel` lo crea
+    antes: en un proceso nuevo nunca se cargaban y SPICE fallaba con MISSINGTIMEINFO (caía a
+    Kepler). Aquí se descargan los kernels grandes si faltan y se cargan una sola vez.
+    Los fallos de red/archivos suben como OSError/SpiceyError (los captura `_estado_pymcel`)."""
+    global _SPICE_LISTO
+    if _SPICE_LISTO:
+        return
+    _preparar_datos_pymcel()
+    if not glob.glob(os.path.join("pymcel", "data", "*.bsp")):
+        pc.descarga_kernels(verbose=False)
+        _preparar_datos_pymcel()
+    spy.furnsh(os.path.join("pymcel", "data", "kernels.txt"))
+    _SPICE_LISTO = True
+
+
 def _eph_cargar_lote(cuerpo: str, fecha_lanzamiento: str, i0: int) -> dict:
     """Consulta SPICE (una sola llamada) los nodos i0 .. i0+_EPH_NODOS_LOTE-1
     y devuelve {índice: (x, y, vx, vy)} en SI, marco eclíptico J2000,
@@ -1169,7 +1202,7 @@ def _eph_cargar_lote(cuerpo: str, fecha_lanzamiento: str, i0: int) -> dict:
     fechas = [base + timedelta(seconds=t_epoca0 + (i0 + k) * _EPH_PASO)
               for k in range(n)]
     jd_tdb = [float(j) for j in np.atleast_1d(Time(fechas).tdb.jd)]
-    _preparar_datos_pymcel()
+    _asegurar_kernels_spice()
     data, _ts, _df = pc.consulta_spice(
         id=CUERPOS[cuerpo].horizons_id,
         location=CUERPOS["tierra"].horizons_id,
@@ -1720,6 +1753,101 @@ class _ProveedorHorizonsVerlet:
         return self.estado_3d(cuerpo, t)[0][2]
 
 
+ETIQUETA_REBOUND = "REBOUND IAS15 (masas puntuales; no es SPICE)"
+
+# GM [m^3/s^2] de los baricentros planetarios (valores tipo DE440). Perturban a Sol, Tierra y Luna;
+# sin ellos el Sol geocéntrico se aparta ~50 km a 10 d (sobre todo por Júpiter).
+_GM_PLANETAS_BARICENTROS = {
+    "1": 2.2031868551e13, "2": 3.2485859200e14, "4": 4.2828375816e13,
+    "5": 1.2671276480e17, "6": 3.7940584842e16, "7": 5.7945486e15, "8": 6.8365271e15,
+}
+
+
+def _importar_rebound():
+    try:
+        import rebound
+    except ImportError as e:
+        raise EfemeridesNoValidas(
+            "efemerides_lunar='rebound' exige REBOUND (`pip install rebound`); "
+            "o elija 'spice' / 'horizons_verlet'") from e
+    return rebound
+
+
+def _estados_iniciales_rebound(fecha_iso: str):
+    """Estados iniciales en un marco INERCIAL (eclíptico J2000): lista [(GM, estado6)] y los
+    índices (Sol, Tierra, Luna). Con SPICE: Sol, Tierra, Luna y los 7 baricentros planetarios
+    (marco baricéntrico). Sin SPICE (kernels/red): Sol y Luna geocéntricos de Horizons con la
+    Tierra en reposo en el origen (invariancia galileana) y SIN planetas.
+    Devuelve (cuerpos, i_sol, i_tierra, i_luna, origen, con_planetas)."""
+    try:
+        _asegurar_kernels_spice()
+        f = datetime.fromisoformat(_fecha_utc_normalizada(fecha_iso))
+        jd = float(Time(f).tdb.jd)
+
+        def estado(id_):
+            data, _ts, _df = pc.consulta_spice(id=id_, location="@0", epochs=[jd])
+            arr = np.asarray(data, dtype=float).reshape(-1, 6)
+            return arr[0]
+        cuerpos = [(MU_SOL, estado("10")), (MU_T, estado("399")), (MU_LUNA, estado("301"))]
+        cuerpos += [(gm, estado(k)) for k, gm in _GM_PLANETAS_BARICENTROS.items()]
+        if not all(np.all(np.isfinite(e)) for _, e in cuerpos):
+            raise ValueError("estado no finito de SPICE")
+        return cuerpos, 0, 1, 2, "SPICE + planetas", True
+    except (SpiceyError, OSError, ValueError, KeyError, RuntimeError):
+        sol = np.array(_fetch_horizons_state_3d("sol", fecha_iso), dtype=float)
+        luna = np.array(_fetch_horizons_state_3d("luna", fecha_iso), dtype=float)
+        cuerpos = [(MU_SOL, sol), (MU_T, np.zeros(6)), (MU_LUNA, luna)]
+        return cuerpos, 0, 1, 2, "Horizons, sin planetas", False
+
+
+def _tabla_rebound(rebound, cuerpos, i_sol, i_tierra, i_luna, paso: float, n_nodos: int):
+    """Tabla (n_nodos, 12) con Sol y Luna relativos a la Tierra (x,y,z,vx,vy,vz), integrando
+    con IAS15 (G=1, masas = GM). Un nodo cada `paso` s."""
+    sim = rebound.Simulation()
+    sim.G = 1.0
+    sim.integrator = "ias15"
+    for mu, e in cuerpos:
+        sim.add(m=float(mu), x=e[0], y=e[1], z=e[2], vx=e[3], vy=e[4], vz=e[5])
+    sim.move_to_com()
+    out = np.empty((n_nodos, 12))
+    for k in range(n_nodos):
+        sim.integrate(float(k * paso), exact_finish_time=1)
+        p = sim.particles
+        t = p[i_tierra]
+        for col, idx in ((0, i_sol), (6, i_luna)):
+            q = p[idx]
+            out[k, col:col + 6] = (q.x - t.x, q.y - t.y, q.z - t.z,
+                                   q.vx - t.vx, q.vy - t.vy, q.vz - t.vz)
+    if not np.all(np.isfinite(out)):
+        k = int(np.argmax(~np.all(np.isfinite(out), axis=1)))
+        raise EfemeridesNoValidas(f"REBOUND: estado no finito en el nodo {k} (t={k * paso:.0f} s)")
+    return out
+
+
+class _ProveedorRebound(_ProveedorHorizonsVerlet):
+    """(12.13.8) Mismo contrato que `_ProveedorHorizonsVerlet` (tabla + Hermite 3D, consulta en
+    cualquier orden), pero la tabla sale de REBOUND/IAS15 con Sol, Tierra, Luna y los planetas.
+    Medido contra SPICE (validar_rebound_v1.py, 2026-01-01, 10 d): Luna 0,33 km y Sol 0,07 km
+    con planetas (Verlet: 0,44 km y 11 500 km). Los baricentros planetarios solo se usan si hay
+    SPICE; sin él el Sol llega a ~50 km a 10 d y la Luna casi no cambia."""
+    etiqueta = ETIQUETA_REBOUND
+
+    def __init__(self, fecha_iso: str, horizonte_s: float, paso_tabla: float = 600.0,
+                 estados=None):
+        rebound = _importar_rebound()
+        if not (paso_tabla > 0.0 and math.isfinite(paso_tabla)):
+            raise ValueError("paso_tabla debe ser positivo y finito")
+        self.t_fin = float(horizonte_s)
+        self.paso = float(paso_tabla)
+        n_nodos = int(math.ceil(self.t_fin / self.paso)) + 2
+        cuerpos, i_s, i_t, i_l, self.origen, self.con_planetas = (
+            estados if estados is not None else _estados_iniciales_rebound(fecha_iso))
+        self.etiqueta = f"REBOUND IAS15 ({self.origen}; masas puntuales)"
+        t3 = _tabla_rebound(rebound, cuerpos, i_s, i_t, i_l, self.paso, n_nodos)
+        self.estado0 = t3[0].copy()
+        self._tab3d = np.ascontiguousarray(t3)
+
+
 VALIDACION_HORIZONS_ARCHIVO = Path(__file__).with_name("validacion_horizons_verlet_v12.13.6.json")
 
 
@@ -2119,7 +2247,7 @@ class Config:
     longitud_lanzamiento_ecliptica: float = 90.0
     # (12.4.0) fuente de efemérides del modo lunar: "spice" | "horizons_verlet"
     # (12.5.0: por defecto "horizons_verlet")
-    efemerides_lunar: str = "horizons_verlet"
+    efemerides_lunar: str = "rebound"   # (12.13.8; antes "horizons_verlet")
     # Órbita de aparcamiento: excentricidad máxima para darla por segura.
     ECC_MAX_APARCAMIENTO: float = 0.01
     # Paso de coast (sin empuje) del modo lunar [s]; se acorta para caer
@@ -2187,7 +2315,7 @@ class Config:
     _INTEGRADORES_VALIDOS = ("hibrido", "rk45")
     _DINAMICAS_VALIDAS = ("variable", "congelada")
     _EVENTOS_VALIDOS = ("integrador", "paso")
-    _EFEMERIDES_LUNAR_VALIDAS = ("spice", "horizons_verlet")
+    _EFEMERIDES_LUNAR_VALIDAS = ("spice", "horizons_verlet", "rebound")
     _DEORBIT_ACTIVACIONES = ("sitio", "orbita", "t")
     _MARCOS_VISTA = ("tierra", "baricentro")
     _CUERPOS_PERTURBADORES = ("sol", "luna")    # los únicos con efeméride
@@ -2356,9 +2484,9 @@ class Config:
                    f"T_MAX_LUNAR={self.T_MAX_LUNAR!r}: debe superar "
                    f"LUNAR_HORIZONTE_TRANSFERENCIA + LUNAR_EXTENSION_PERISELENE_S "
                    f"({horizonte_plan:.0f} s) para completar la búsqueda del periselene")
-            if self.efemerides_lunar == "horizons_verlet":
+            if self.efemerides_lunar in ("horizons_verlet", "rebound"):
                 exigir(fin(self.T_MAX_LUNAR) and self.T_MAX_LUNAR <= 30.0 * 86400.0,
-                       f"T_MAX_LUNAR={self.T_MAX_LUNAR!r}: Horizons+Verlet preintegra todo "
+                       f"T_MAX_LUNAR={self.T_MAX_LUNAR!r}: Horizons+Verlet / REBOUND preintegran todo "
                        "el horizonte antes del despegue; el máximo admitido es 30 días. "
                        "Para horizontes mayores use SPICE.")
             if self.LUNAR_LOI:
@@ -3745,16 +3873,19 @@ class Simulacion:
         # consultable en cualquier t) sustituye a pymcel: es para pruebas
         # deterministas y NO es una validación física de SPICE.
         self._proveedor_efemerides = proveedor_efemerides
-        if (config.modo_mision == "lunar" and config.efemerides_lunar == "horizons_verlet"
+        if (config.modo_mision == "lunar"
+                and config.efemerides_lunar in ("horizons_verlet", "rebound")
                 and proveedor_efemerides is None):
+            clase = (_ProveedorRebound if config.efemerides_lunar == "rebound"
+                     else _ProveedorHorizonsVerlet)
             try:
-                self._proveedor_efemerides = _ProveedorHorizonsVerlet(
+                self._proveedor_efemerides = clase(
                     config.fecha_lanzamiento, config.T_MAX_LUNAR + 2 * 86400.0)
             except EfemeridesNoValidas:
                 raise
             except (RuntimeError, OSError, ValueError) as e:
                 raise EfemeridesNoValidas(
-                    f"modo lunar: no se pudo preparar Horizons + Verlet "
+                    f"modo lunar: no se pudo preparar {config.efemerides_lunar} "
                     f"({type(e).__name__}: {e}); no se acepta respaldo Kepler") from e
         self._lunar: bool = config.modo_mision == "lunar"
         lam = math.radians(config.longitud_lanzamiento_ecliptica)
@@ -4038,7 +4169,14 @@ class Simulacion:
                 raise EfemeridesNoValidas(
                     f"modo lunar: no hay efemérides válidas de {cuerpo!r} "
                     f"({type(e).__name__}: {e})") from e
-        if isinstance(self._proveedor_efemerides, _ProveedorHorizonsVerlet):
+        if isinstance(self._proveedor_efemerides, _ProveedorRebound):
+            if self._proveedor_efemerides.con_planetas:
+                self._log("✓ REBOUND con planetas: validado contra SPICE (2026-01-01, 10 d): "
+                          "Luna ≤ 0,4 km, Sol ≤ 0,1 km (validar_rebound_v1.py).")
+            else:
+                self._log("⚠ REBOUND sin planetas (no hay SPICE): la Luna casi no cambia, "
+                          "pero el Sol puede apartarse ~50 km a 10 d.")
+        elif type(self._proveedor_efemerides) is _ProveedorHorizonsVerlet:
             self._validacion_horizons = _leer_validacion_horizons_verlet(cfg.fecha_lanzamiento)
             if self._validacion_horizons is None:
                 self._log("⚠ Horizons+Verlet: discrepancia empírica NO medida para "
@@ -9652,7 +9790,7 @@ class InterfazSimulacion:
             cfg.LUNAR_LOI = bool(var_loi.get())
         var_efem = getattr(self, "var_efem_spice", None)
         cfg.efemerides_lunar = ("spice" if (var_efem is not None and var_efem.get())
-                                else "horizons_verlet")
+                                else "rebound")
         if not (-90.0 <= cfg.latitud_lanzamiento <= 90.0
                 and 0.0 <= cfg.azimut_lanzamiento <= 180.0):
             self._mostrar_error(
@@ -10047,6 +10185,12 @@ class InterfazSimulacion:
             filas.append(("Validación efemérides:",
                           f"Horizons · Δr Luna máx. {err_l:.3f} km",
                           "normal" if val.get("aceptada", False) else "alerta"))
+        elif isinstance(sim._proveedor_efemerides, _ProveedorRebound):
+            ok = sim._proveedor_efemerides.con_planetas
+            filas.append(("Validación efemérides:",
+                          "REBOUND vs SPICE · Luna 0,3 km, Sol 0,1 km (10 d)" if ok
+                          else "REBOUND sin planetas · Sol ~50 km a 10 d",
+                          "normal" if ok else "alerta"))
         elif isinstance(sim._proveedor_efemerides, _ProveedorHorizonsVerlet):
             filas.append(("Validación efemérides:", "NO MEDIDA contra Horizons", "alerta"))
         if est.marco != "tierra":
