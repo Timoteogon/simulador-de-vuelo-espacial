@@ -57,7 +57,7 @@ python -m pip install -r requirements-dev.txt
 El vehículo se propaga en dos dimensiones. En el marco geocéntrico, la aceleración incluye la gravedad terrestre, el empuje, el arrastre atmosférico y, cuando están habilitadas, las perturbaciones de terceros cuerpos:
 
 $$
-\frac{d^2 \vec r}{dt^2} = -\frac{\mu_T}{r^3}\vec r
+\ddot{\mathbf r} = -\frac{\mu_T}{r^3}\mathbf r
 + \frac{T}{m}\hat{u}_T
 - \frac{\rho C_D A}{2m}\,|\vec v_{\mathrm{rel}}|\vec v_{\mathrm{rel}}
 + \vec a_{\mathrm{pert}}.
