@@ -33,16 +33,21 @@ Dependencias opcionales:
 - `plotly`: gráficas finales interactivas.
 - `pytest`: ejecución de las pruebas automatizadas.
 
+```markdown
 Instalación de las dependencias principales:
-
-```bash
-python -m pip install numpy scipy matplotlib numba astropy spiceypy pymcel
 ```
 
+```bash
+python -m pip install -r requirements.txt
+```
+
+```markdown
 Para las herramientas de pruebas y gráficas opcionales:
+```
 
 ```bash
-python -m pip install pytest plotly
+python -m pip install -r requirements-dev.txt
+
 ```
 
 ## Modelo Físico y Ecuaciones
@@ -132,13 +137,16 @@ En el modo de escape, el criterio energético de corte es $\varepsilon\geq 0$. L
 
 ```text
 simulador-de-vuelo-espacial/
-├── cohete_v12.13.6.py                  # Motor principal del simulador
-├── test_cohete.py                      # Pruebas focalizadas
-├── regresion_cohete_v12.12.2.py        # Ejecutor de regresión
-├── regresion_ref_v12.13.3.json         # Referencia de regresión, si se incluye
-├── validador_horizons.py               # Validador de efemérides, si se incluye
-├── validacion_horizons_verlet_v12.13.6.json # Informe de validación, si se genera
-└── README.md                           # Documentación principal
+├── src/simulador/
+│   ├── cohete.py        # Motor principal del simulador (v12.13.6)
+│   ├── __init__.py
+│   └── __main__.py
+├── requirements.txt     # Dependencias directas
+├── requirements-dev.txt # Herramientas de desarrollo (pytest)
+├── pyproject.toml       # Configuración del paquete
+├── LICENSE              # Licencia MIT
+└── README.md            # Documentación principal
+
 ```
 
 Los nombres de archivos auxiliares son orientativos: incluye en el repositorio únicamente los que realmente distribuyas junto con el motor.
@@ -157,8 +165,10 @@ cd simulador-de-vuelo-espacial
 Instala las dependencias y ejecuta el motor:
 
 ```powershell
-py -m pip install numpy scipy matplotlib numba astropy spiceypy pymcel
-py .\cohete_v12.13.6.py
+py -m pip install -r requirements.txt
+py -m pip install -e .
+py -m simulador
+Alternativamente, sin instalar el paquete: `py .\src\simulador\cohete.py`
 ```
 
 La ejecución abre la interfaz gráfica Tkinter. Desde ella se selecciona el modo de misión, el perfil, los parámetros de lanzamiento y las opciones de visualización.
