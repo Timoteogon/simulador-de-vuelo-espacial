@@ -1,7 +1,9 @@
-astropy==6.1.0
-matplotlib==3.8.4
-numba==0.59.1
-numpy==1.26.4
-pymcel==1.0.3
-scipy==1.13.0
-spiceypy==6.0.0
+astropy==8.0.1
+astropy-iers-data==0.2026.9.14.0.56.43
+matplotlib==3.11.2
+matplotlib-inline==0.2.2
+numba==0.68.0
+numpy==2.5.3
+pymcel==0.9.25
+scipy==1.18.1
+spiceypy==8.2.0
