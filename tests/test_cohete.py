@@ -794,3 +794,43 @@ def test_z_luna_solo_silencia_errores_de_datos(mod):
     sim._proveedor_efemerides = proveedor(TypeError("bug de programación"))
     with pytest.raises(TypeError):
         sim._z_luna(0.0)
+
+
+# --- Guardas completas y planificación que lanza (12.13.10) ------------------------
+
+def test_funciones_de_evento_toleran_posicion_infinita_con_velocidad_finita(mod):
+    sim = mod.Simulacion(mod.Config())
+    for malo in ([float("inf"), 7.0e6, 0.0, 7500.0], [7.0e6, -float("inf"), 1.0, 1.0]):
+        assert sim._corte_por_estado(malo) is False
+        assert sim._margen_corte(malo) == -1.0
+
+
+def test_integrar_tramo_rechaza_resultado_no_finito(mod, monkeypatch):
+    sim = mod.Simulacion(mod.Config())
+    nan = float("nan")
+    monkeypatch.setattr(sim, "_en_coast_libre", lambda empuje: True)
+    monkeypatch.setattr(sim, "_integrar_rk4", lambda *a, **k: (nan, 0.0, 0.0, 0.0))
+    assert sim._integrar_tramo((7.0e6, 0.0, 0.0, 7500.0), 0.0, 1.0, (), 0.0) is None
+    assert "no finito" in sim._msg_fallo_integrador
+    ley = SimpleNamespace(fuerzas_congeladas=lambda y: ())
+    monkeypatch.setattr(sim, "_integrar_rk4", lambda *a, **k: (nan, 0.0, 0.0, 0.0))
+    assert sim._integrar_tramo_v12((7.0e6, 0.0, 0.0, 7500.0, 1.0, 0.0), 0.0, 1.0, ley, 0.0) is None
+
+
+def test_plan_que_lanza_cierra_la_mision_en_vez_de_quedar_a_medias(mod):
+    import time
+
+    def plan():
+        yield
+        raise TypeError("bug en el planificador")
+
+    sim = mod.Simulacion(mod.Config())
+    sim.presupuesto_plan_s = 0.03
+    sim.esperando_plan = True
+    sim._plan_gen = plan()
+    sim._plan_t0 = time.monotonic()
+    assert sim._avanzar_plan_por_tramos() is True
+    assert sim._plan_gen is None and sim.esperando_plan is False
+    assert sim.estado.simulacion_terminada is True
+    assert sim.eventos.mision_cumplida is False
+    assert "TypeError" in sim.eventos.datos_mision["motivo"]
