@@ -4,6 +4,19 @@ Desde 12.13.8 el motor vive en un único archivo, `src/simulador/cohete.py`, sin
 La versión se lleva en `pyproject.toml`, `simulador.__version__`, el encabezado de cambios de `cohete.py`
 y los mensajes de commit. Las notas por versión anteriores (hasta 12.13.6) no se incluyen aquí.
 
+## 12.13.11 — tercera revisión: medir antes de arreglar
+Aplicado: validación de booleanos (C6), cancelar el planificador si la física lanza (D16), `AlmacenHistorial` con el disco caído (C4),
+constantes con nombre (D2) y contratos documentados (D5, D6, D7: `aplicar_preset` sigue reescribiendo `usar_marco_movil`, ahora avisado).
+
+Medido y descartado:
+- **A5 (corte por evento vs bisección):** en satelital, tripulada, suborbital, escape y deorbit, `corte_biseccion` = 0 y el corte va siempre por evento
+  (error del evento ~1e-10 s, bisección ~1e-5 s). El criterio de la propia reseña (ratio cercano a 1) se cumple: no hay nada que arreglar.
+- **A4 (tolerancia de `_k_quema`):** el piso de 3e-3 J/kg a ~10 km/s son ~3e-7 m/s de Δv (no 0,08 m/s) y ~0,6 m en el semieje mayor de la TLI: holgado frente a 1 km.
+- **A6 (rejillas):** el plan y el vuelo evalúan en múltiplos de 600 s absolutos, así que los nodos coinciden bit a bit (hay prueba).
+
+No se hace mientras el monolito siga entero: D3 (`_TERCEROS_CUERPOS_FUENTE` a `Config`, `_ELEM_CACHE` a `threading.local`; hoy la física no corre en hilos, así que no hay carrera),
+D8 (partir `Config`) y D1. Rendimiento B2–B7 y D17: solo si un perfilado lo justifica.
+
 ## 12.13.10 — cierre de las vías de escape de 12.13.9
 Segunda revisión externa; verificado y aplicado:
 - Los eventos de `solve_ivp` atrapan el `ValueError` de `_elementos_orbitales` (px/py = ±Inf pasaban la guarda).

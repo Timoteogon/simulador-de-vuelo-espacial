@@ -5,4 +5,4 @@ vuelo lunar) con integración numérica, efemérides de Sol y Luna (REBOUND, SPI
 Horizons+Verlet) y una interfaz gráfica Tkinter. El motor está en `simulador.cohete`.
 """
 
-__version__ = "12.13.10"
+__version__ = "12.13.11"
