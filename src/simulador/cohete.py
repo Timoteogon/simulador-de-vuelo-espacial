@@ -105,6 +105,15 @@ Cambios de 11.21.1 (endurecimiento; sin cambio de arquitectura):
   - Esta sección: limitaciones heredadas frente a las de la localización de
     eventos. Nada de la física cambia salvo lo del corte indicado arriba.
 
+Cambios de 12.13.10 (cierra las vías de escape de 12.13.9; el vuelo nominal no cambia):
+  - `_corte_por_estado` y `_margen_corte` atrapan ValueError de `_elementos_orbitales`
+    (px o py = ±Inf con velocidades finitas pasaban la guarda anterior).
+  - `_integrar_tramo` y `_integrar_tramo_v12` devuelven None ante un resultado no finito
+    (RK4 o RK45), así que la bisección de corte y los tramos con eventos lo tratan como fallo
+    del integrador; el mensaje incluye px, py, vx, vy.
+  - `_avanzar_plan_por_tramos` cierra la misión como NO CUMPLIDA si el plan lanza una excepción
+    (antes el generador quedaba cerrado y el cuadro siguiente "terminaba" la planificación sin plan).
+
 Cambios de 12.13.9 (robustez ante estados no finitos; el vuelo nominal no cambia):
   - `_estado_integrado_valido`: tras integrar (marco tierra y zonas crucero/luna) un estado con
     NaN/Inf detiene la simulación como fallo del integrador, en el último estado válido.
@@ -5403,7 +5412,7 @@ class Simulacion:
         if isinstance(fuerzas, LeyV12):
             return self._integrar_tramo_v12(y0, t0, dur, fuerzas, empuje)
         if self._en_coast_libre(empuje):
-            return self._integrar_rk4(list(y0), t0, dur, fuerzas)
+            return self._finito_o_none(self._integrar_rk4(list(y0), t0, dur, fuerzas))
         sol = solve_ivp(
             derivadas_marco_tierra,
             (t0, t0 + dur),
@@ -5414,7 +5423,7 @@ class Simulacion:
         if not sol.success:
             self._msg_fallo_integrador = str(sol.message)
             return None
-        return tuple(float(sol.y[i, -1]) for i in range(4))
+        return self._finito_o_none(tuple(float(sol.y[i, -1]) for i in range(4)))
 
     def _integrar_tramo_v12(self, y0, t0: float, dur: float, ley: "LeyV12",
                             empuje: float):
@@ -5426,14 +5435,14 @@ class Simulacion:
                                     ley.fuerzas_congeladas(y0))
             # empuje == 0 aquí (condición de coast libre): no se quema nada,
             # ni siquiera con la etapa encendida y T <= 0 (ver derivadas_v12)
-            return (*y4, y0[4], y0[5])
+            return self._finito_o_none((*y4, y0[4], y0[5]))
         sol = solve_ivp(derivadas_v12, (t0, t0 + dur), list(y0), args=(ley,),
                         method="RK45", rtol=1e-6,
                         atol=[1e-8, 1e-8, 1e-8, 1e-8, 1e-6, 1e-8])
         if not sol.success:
             self._msg_fallo_integrador = str(sol.message)
             return None
-        return tuple(float(sol.y[i, -1]) for i in range(6))
+        return self._finito_o_none(tuple(float(sol.y[i, -1]) for i in range(6)))
 
     def _avanzar_con_empuje(self, y0, t0: float, dt: float, t_emp: float,
                             fuerzas: tuple, flujo: float,
@@ -5455,6 +5464,15 @@ class Simulacion:
                 fuerzas[5], fuerzas[6])
         return self._integrar_tramo(y1, t0 + t_emp, dt - t_emp, cola, 0.0)
 
+    def _finito_o_none(self, y):
+        """(12.13.10) `y` si todas sus componentes son finitas; si no, deja el motivo y
+        devuelve None (los llamadores ya tratan None como fallo del integrador). Cubre
+        también los tramos intermedios (bisección de corte, tramos con eventos)."""
+        if y is None or all(math.isfinite(float(v)) for v in y):
+            return y
+        self._msg_fallo_integrador = f"el integrador produjo un estado no finito: {tuple(y)[:4]!r}"
+        return None
+
     def _estado_integrado_valido(self, y, ruta: str) -> bool:
         """(12.13.9) Rechaza un estado no finito (NaN/Inf) producido por el integrador:
         un subpaso que pasa casi por r = 0 lo genera sin excepción y, sin esta guarda,
@@ -5462,7 +5480,9 @@ class Simulacion:
         finito termina la simulación en el último estado válido, como cualquier fallo."""
         if all(math.isfinite(float(v)) for v in tuple(y)[:4]):
             return True
-        self._msg_fallo_integrador = "el integrador produjo un estado no finito"
+        self._msg_fallo_integrador = (
+            "el integrador produjo un estado no finito: "
+            f"px={y[0]!r}, py={y[1]!r}, vx={y[2]!r}, vy={y[3]!r}")
         self._fallo_integrador(ruta)
         return False
 
@@ -5501,9 +5521,12 @@ class Simulacion:
         cfg = self.config
         px, py, vx, vy = y[:4]
         r = math.hypot(px, py)
-        if not (r >= 1.0 and math.isfinite(vx + vy)):   # NaN/Inf de un subpaso de prueba
+        try:
+            if not (r >= 1.0 and math.isfinite(vx + vy)):   # NaN/Inf de un subpaso de prueba
+                return False
+            orb = elementos_orbitales(px, py, vx, vy)       # ValueError si px o py = ±Inf
+        except ValueError:
             return False
-        orb = elementos_orbitales(px, py, vx, vy)
         if self._lunar and est.fase == "quema_tli":
             return orb["eps"] >= self._lunar_plan["eps_obj"]
         if self.es_deorbit() and self._deorbit_activo:
@@ -5549,9 +5572,12 @@ class Simulacion:
         cfg = self.config
         px, py, vx, vy = y[0], y[1], y[2], y[3]
         r = math.hypot(px, py)
-        if not (r >= 1.0 and math.isfinite(vx + vy)):   # NaN/Inf de un subpaso de prueba
+        try:
+            if not (r >= 1.0 and math.isfinite(vx + vy)):   # NaN/Inf de un subpaso de prueba
+                return -1.0
+            orb = elementos_orbitales(px, py, vx, vy)       # ValueError si px o py = ±Inf
+        except ValueError:
             return -1.0
-        orb = elementos_orbitales(px, py, vx, vy)
         if self._lunar and est.fase == "quema_tli":
             return self._sano(orb["eps"] - self._lunar_plan["eps_obj"] - desfase)
         if self.es_deorbit() and self._deorbit_activo:
@@ -7411,6 +7437,10 @@ class Simulacion:
         except StopIteration:
             self._plan_gen = None
             print(f"⏱ Planificación por tramos: {_monotonic() - self._plan_t0:.1f} s")
+            return True
+        except Exception as e:      # (12.13.10) un generador que lanza queda cerrado: sin esto el
+            self._fallar_planificacion(          # siguiente cuadro vería StopIteration y "terminaría" sin plan
+                f"la planificación lanzó {type(e).__name__}: {e}")
             return True
 
     def _error_angular_base(self) -> float:
