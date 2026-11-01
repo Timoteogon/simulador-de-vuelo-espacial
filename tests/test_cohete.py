@@ -840,7 +840,8 @@ def test_plan_que_lanza_cierra_la_mision_en_vez_de_quedar_a_medias(mod):
 
 @pytest.mark.parametrize("campo", ["suborbital_cutoff_por_apogeo", "empuje_vs_altitud",
                                    "usar_terceros_cuerpos", "usar_marco_movil", "mostrar_crtbp",
-                                   "escala_log", "mostrar_grilla_tierra", "LUNAR_LOI"])
+                                   "escala_log", "mostrar_grilla_tierra", "LUNAR_LOI",
+                                   "cd_vs_mach", "rotacion_terrestre"])
 def test_validar_config_exige_booleanos_de_verdad(mod, campo):
     for malo in ("false", 1, 0, None):
         cfg = mod.Config()
@@ -900,3 +901,14 @@ def test_tablas_de_efemerides_del_plan_y_del_vuelo_comparten_nodos(mod):
     vuelo = sim._tabla_efemerides_lunar(0.0, 40)
     plan = sim._tabla_efemerides_lunar(600.0 * 7, 20)
     assert (vuelo[0][7:27] == plan[0]).all()
+
+
+def test_validar_config_cubre_todos_los_campos_bool(mod):
+    import dataclasses
+    campos = [f.name for f in dataclasses.fields(mod.Config) if str(f.type) == "bool"]
+    assert len(campos) >= 10
+    for nombre in campos:
+        cfg = mod.Config()
+        setattr(cfg, nombre, "false")
+        with pytest.raises(ValueError, match=nombre):
+            cfg._validar_config()
