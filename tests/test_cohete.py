@@ -734,3 +734,63 @@ def test_sin_rebound_el_proveedor_avisa_como_instalarlo(mod, monkeypatch):
     monkeypatch.setattr(builtins, "__import__", sin_rebound)
     with pytest.raises(mod.EfemeridesNoValidas, match="pip install rebound"):
         mod._importar_rebound()
+
+
+# --- Estados no finitos (12.13.9) -------------------------------------------------
+
+def test_elementos_orbitales_rechaza_estado_no_finito(mod):
+    nan, inf = float("nan"), float("inf")
+    for estado in ((nan, 7e6, 0.0, 7500.0), (7e6, 0.0, inf, 7500.0), (7e6, 0.0, 0.0, -inf)):
+        with pytest.raises(ValueError, match="no finito"):
+            mod.elementos_orbitales(*estado)
+    assert mod.elementos_orbitales(7.0e6, 0.0, 0.0, 7500.0)["ecc"] >= 0.0   # estado válido
+
+
+def test_funciones_de_evento_toleran_estado_no_finito(mod):
+    # solve_ivp puede probar subpasos no finitos: el evento debe decir "no hay corte", no lanzar.
+    sim = mod.Simulacion(mod.Config())
+    malo = [float("nan"), 7.0e6, 0.0, 7500.0]
+    assert sim._corte_por_estado(malo) is False
+    assert sim._margen_corte(malo) == -1.0
+
+
+def test_estado_integrado_no_finito_detiene_la_simulacion(mod):
+    sim = mod.Simulacion(mod.Config())
+    est = sim.estado
+    assert sim._estado_integrado_valido((1.0, 2.0, 3.0, 4.0), "marco tierra") is True
+    assert est.simulacion_terminada is False
+    assert sim._estado_integrado_valido((float("nan"), 2.0, 3.0, 4.0), "marco tierra") is False
+    assert est.simulacion_terminada is True
+    assert "no finito" in sim.eventos.fallo_integrador
+
+
+def test_paso_con_integrador_que_devuelve_nan_no_propaga_el_nan(mod, monkeypatch, capsys):
+    sim = mod.Simulacion(mod.Config())
+    for _ in range(3):
+        sim.avanzar_paso()
+    antes = (sim.estado.px, sim.estado.py, sim.estado.vx, sim.estado.vy)
+    monkeypatch.setattr(sim, "_avanzar_con_empuje",
+                        lambda *a, **k: (float("nan"), 0.0, 0.0, 0.0), raising=False)
+    monkeypatch.setattr(sim.config, "eventos", "paso", raising=False)
+    t = sim.estado.t
+    sim.avanzar_paso()
+    est = sim.estado
+    assert est.simulacion_terminada is True
+    assert (est.px, est.py, est.vx, est.vy) == antes          # último estado válido
+    assert est.t == t
+    assert "no finito" in sim.eventos.fallo_integrador
+
+
+def test_z_luna_solo_silencia_errores_de_datos(mod):
+    sim = mod.Simulacion.__new__(mod.Simulacion)
+
+    def proveedor(exc):
+        def z(cuerpo, t):
+            raise exc
+        return SimpleNamespace(z=z)
+
+    sim._proveedor_efemerides = proveedor(ValueError("fuera de tabla"))
+    assert sim._z_luna(0.0) is None
+    sim._proveedor_efemerides = proveedor(TypeError("bug de programación"))
+    with pytest.raises(TypeError):
+        sim._z_luna(0.0)
