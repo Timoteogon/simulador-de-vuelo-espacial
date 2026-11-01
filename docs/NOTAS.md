@@ -4,6 +4,12 @@ Desde 12.13.8 el motor vive en un único archivo, `src/simulador/cohete.py`, sin
 La versión se lleva en `pyproject.toml`, `simulador.__version__`, el encabezado de cambios de `cohete.py`
 y los mensajes de commit. Las notas por versión anteriores (hasta 12.13.6) no se incluyen aquí.
 
+## 12.13.12 — cierre de la tercera revisión
+- La validación de booleanos recorre los campos del dataclass (incluye `cd_vs_mach` y `rotacion_terrestre`, que se habían quedado fuera).
+- Contrato de `_throttle` corregido (`_throttle_g_limit` puede devolver menos que THROTTLE_MIN con un G_MAX_TRIPULADA muy bajo).
+- A5, A4 y A6 ya estaban medidos en 12.13.11 (ver abajo): la bisección no se usa, la tolerancia es holgada y las rejillas coinciden.
+- Siguen pendientes sin urgencia, a propósito: D17 (timeout de Horizons), B2–B7 (rendimiento) y D1/D3/D8 (partir el monolito).
+
 ## 12.13.11 — tercera revisión: medir antes de arreglar
 Aplicado: validación de booleanos (C6), cancelar el planificador si la física lanza (D16), `AlmacenHistorial` con el disco caído (C4),
 constantes con nombre (D2) y contratos documentados (D5, D6, D7: `aplicar_preset` sigue reescribiendo `usar_marco_movil`, ahora avisado).
