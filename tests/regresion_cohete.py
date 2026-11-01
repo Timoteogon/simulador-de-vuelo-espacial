@@ -1892,6 +1892,7 @@ def verificar_gui_bucle(archivo: str) -> bool:
         g.msgs = []
         g._mostrar_error = lambda t: g.msgs.append(t)
         g._after_id = None
+        g._planificador = None                      # (12.13.11) `_cancelar_planificador` lo lee si la física lanza
         # (12.13.8) El refresco de paneles necesita decenas de widgets que este mock no
         # crea; fallaba con AttributeError (capturado y mostrado como ⚠) sin que la prueba
         # lo ejerciera. Se sustituyen a propósito: lo que se verifica es el estado terminal.

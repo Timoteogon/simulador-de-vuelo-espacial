@@ -834,3 +834,69 @@ def test_plan_que_lanza_cierra_la_mision_en_vez_de_quedar_a_medias(mod):
     assert sim.estado.simulacion_terminada is True
     assert sim.eventos.mision_cumplida is False
     assert "TypeError" in sim.eventos.datos_mision["motivo"]
+
+
+# --- 12.13.11: booleanos, planificador huérfano, almacén con disco caído ------------
+
+@pytest.mark.parametrize("campo", ["suborbital_cutoff_por_apogeo", "empuje_vs_altitud",
+                                   "usar_terceros_cuerpos", "usar_marco_movil", "mostrar_crtbp",
+                                   "escala_log", "mostrar_grilla_tierra", "LUNAR_LOI"])
+def test_validar_config_exige_booleanos_de_verdad(mod, campo):
+    for malo in ("false", 1, 0, None):
+        cfg = mod.Config()
+        setattr(cfg, campo, malo)
+        with pytest.raises(ValueError, match=campo):
+            cfg._validar_config()
+    cfg = mod.Config()
+    cfg._validar_config()                     # los valores por defecto siguen pasando
+
+
+def test_error_de_fisica_cancela_el_planificador_externo(mod):
+    sim = SimpleNamespace(
+        estado=SimpleNamespace(simulacion_terminada=False, fase="gravity_turn"),
+        config=SimpleNamespace(sim_speed=1, DEORBIT_VEL_MAX_PLAN=1, DEORBIT_PASO_QUEMA_MS=10,
+                               LUNAR_PASOS_MIN_COAST=1),
+        _lunar=False, _planificador_externo=None, esperando_plan=False,
+    )
+
+    def avanzar_paso():
+        raise RuntimeError("fallo de física")
+
+    sim.avanzar_paso = avanzar_paso
+    llamadas = []
+    ui = mod.InterfazSimulacion.__new__(mod.InterfazSimulacion)
+    ui.sim = sim
+    ui._cancelar_planificador = lambda: llamadas.append("cancelar")
+    ui._finalizar_bucle_simulacion = lambda: llamadas.append("finalizar")
+    ui._mostrar_error = lambda texto: llamadas.append("error")
+    ui._pasos_restantes = None
+    ui._paso_simulacion()
+    assert llamadas == ["error", "cancelar", "finalizar"]
+
+
+def test_almacen_con_disco_caido_no_promete_filas(mod, monkeypatch, capsys):
+    import numpy as np
+    alm = mod.AlmacenHistorial()
+    serie = np.arange(5.0)
+    alm.anexar(0, serie, serie, serie, serie, serie, serie, serie, ["gravity_turn"] * 5)
+    assert alm.n == 5
+
+    def falla(*a, **k):
+        raise OSError("disco lleno")
+
+    monkeypatch.setattr(mod.tempfile, "mkstemp", falla)
+    alm._vaciar()
+    assert alm.ok is False and alm.n == 0 and alm.segmentos == []
+    assert alm.leer().shape[0] == 0
+    alm.anexar(5, serie, serie, serie, serie, serie, serie, serie, ["gravity_turn"] * 5)
+    assert alm.n == 0                          # descartado, sin crecer
+    alm.cerrar()
+
+
+def test_tablas_de_efemerides_del_plan_y_del_vuelo_comparten_nodos(mod):
+    # (A6) Planificador (t0 alineado a 600 s) y vuelo (t0 = 0) evalúan la Luna en los mismos
+    # instantes absolutos: los nodos coinciden bit a bit, no hay remuestreo distinto.
+    sim = mod.Simulacion(mod.Config())
+    vuelo = sim._tabla_efemerides_lunar(0.0, 40)
+    plan = sim._tabla_efemerides_lunar(600.0 * 7, 20)
+    assert (vuelo[0][7:27] == plan[0]).all()
