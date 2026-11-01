@@ -106,6 +106,9 @@ Cambios de 11.21.1 (endurecimiento; sin cambio de arquitectura):
     eventos. Nada de la física cambia salvo lo del corte indicado arriba.
 
 Cambios de 12.13.8 (efemérides lunares; el vuelo no cambia):
+  - Los archivos del informe de validación Horizons+Verlet ya no llevan versión en el nombre:
+    `validacion_horizons_verlet.json` y `validar_horizons_verlet.py` (el informe sigue atado al
+    SHA-256 del motor, así que cualquier cambio del archivo lo invalida).
   - Carga de SPICE: pymcel 0.9.25 solo hace `furnsh` en `consulta_spice` si `pymcel/data/kernels.txt`
     NO existe, y `_preparar_datos_pymcel` lo crea antes, así que en un proceso nuevo SPICE fallaba con
     MISSINGTIMEINFO y se caía a Kepler. `_asegurar_kernels_spice()` descarga los kernels grandes si faltan
@@ -1566,7 +1569,7 @@ class _EphemerisVerlet:
 # Modelo: Luna con (mu_T + mu_L) más la marea directa del Sol; Sol en dos
 # cuerpos con la Tierra. No incluye planetas, J2 ni relatividad: es un
 # modelo simplificado y así se etiqueta. Su discrepancia se mide con
-# `validar_horizons_verlet_v12.13.6.py`; sin informe vigente no se considera
+# `validar_horizons_verlet.py`; sin informe vigente no se considera
 # validado para una época concreta.
 ETIQUETA_HORIZONS_VERLET = "Horizons + Verlet 3D (modelo simplificado, no es SPICE)"
 
@@ -1848,7 +1851,7 @@ class _ProveedorRebound(_ProveedorHorizonsVerlet):
         self._tab3d = np.ascontiguousarray(t3)
 
 
-VALIDACION_HORIZONS_ARCHIVO = Path(__file__).with_name("validacion_horizons_verlet_v12.13.6.json")
+VALIDACION_HORIZONS_ARCHIVO = Path(__file__).with_name("validacion_horizons_verlet.json")
 
 
 def _fecha_utc_normalizada(fecha_iso: str) -> str:
@@ -4181,7 +4184,7 @@ class Simulacion:
             if self._validacion_horizons is None:
                 self._log("⚠ Horizons+Verlet: discrepancia empírica NO medida para "
                           "esta versión y esta fecha. Ejecute "
-                          "validar_horizons_verlet_v12.13.6.py antes de confiar "
+                          "validar_horizons_verlet.py antes de confiar "
                           "en resultados de precisión.")
             elif not self._validacion_horizons.get("aceptada", False):
                 self._log("⚠ Horizons+Verlet: la validación guardada no supera los "
