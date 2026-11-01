@@ -13,7 +13,7 @@ Simulador numérico de cohetes de dos etapas desarrollado en Python para estudia
 
 - **Etapa I:** Modelo de ascenso atmosférico, propulsión de dos etapas, gravedad central, arrastre aerodinámico y guiado tipo *gravity turn*.
 - **Etapa II:** Inserción y evolución orbital; perfiles satelitales y tripulados, transferencias GTO, TLI, escape y maniobras de desórbita.
-- **Etapa III:** Dinámica de encuentros lunares, propagación de efemérides mediante Horizons+Verlet o SPICE y validación de las trayectorias frente a JPL Horizons.
+- **Etapa III:** Dinámica de encuentros lunares, propagación de efemérides con REBOUND (por defecto), SPICE o Horizons+Verlet y validación frente a SPICE y JPL Horizons.
 
 ## Requisitos
 
@@ -26,6 +26,7 @@ El proyecto utiliza librerías de Python para cálculo científico, integración
 - `astropy`
 - `spiceypy`
 - `pymcel`
+- `rebound` (efemérides lunares por defecto)
 - `tkinter` (normalmente incluido con Python en Windows)
 
 Dependencias opcionales:
@@ -105,7 +106,7 @@ $$
 
 Para las fases con empuje, atmósfera o transitorios se utiliza integración adaptativa con `solve_ivp` (RK45). En fases de coast libre se emplea RK4 con subpasos limitados. Los kernels numéricos seleccionados se compilan con Numba.
 
-Para la propagación de efemérides tridimensionales con Verlet se utiliza el esquema *velocity-Verlet*:
+Las efemérides de Sol y Luna del modo lunar se propagan por defecto con REBOUND (IAS15, N cuerpos). La ruta alternativa Horizons+Verlet usa el esquema *velocity-Verlet*:
 
 $$
 \vec r_{n+1}=\vec r_n+\vec v_n\Delta t+\frac{1}{2}\vec a_n\Delta t^2,
@@ -143,9 +144,16 @@ En el modo de escape, el criterio energético de corte es $\varepsilon\geq 0$. L
 ```text
 simulador-de-vuelo-espacial/
 ├── src/simulador/
-│   ├── cohete.py        # Motor principal del simulador (v12.13.6)
+│   ├── cohete.py        # Motor principal del simulador
 │   ├── __init__.py
 │   └── __main__.py
+├── tests/
+│   ├── test_cohete.py       # Pruebas unitarias (pytest)
+│   ├── regresion_cohete.py  # Regresión contra regresion_ref*.json
+│   └── regresion_ref*.json  # Referencias (actual y de motores históricos)
+├── herramientas/
+│   └── validar_rebound.py   # Valida Verlet y REBOUND contra SPICE
+├── docs/NOTAS.md        # Historial y notas de desarrollo
 ├── requirements.txt     # Dependencias directas
 ├── requirements-dev.txt # Herramientas de desarrollo (pytest)
 ├── pyproject.toml       # Configuración del paquete
@@ -153,8 +161,6 @@ simulador-de-vuelo-espacial/
 └── README.md            # Documentación principal
 
 ```
-
-Los nombres de archivos auxiliares son orientativos: incluye en el repositorio únicamente los que realmente distribuyas junto con el motor.
 
 ---
 
@@ -181,65 +187,57 @@ La ejecución abre la interfaz gráfica Tkinter. Desde ella se selecciona el mod
 ### Ejecución de pruebas
 
 ```powershell
-py -m pip install pytest
-py -m pytest -q test_cohete.py
+py -m pip install -r requirements-dev.txt
+py -m pytest -q tests/test_cohete.py
 ```
 
-Para fijar explícitamente el motor que deben cargar las pruebas:
-
-```powershell
-$env:COHETE_ARCHIVO = "cohete_v12.13.6.py"
-py -m pytest -q test_cohete.py
-Remove-Item Env:COHETE_ARCHIVO
-```
+Para probar otro motor: `$env:COHETE_ARCHIVO = "ruta\otro_cohete.py"`. La prueba lenta del escape completo se activa con `COHETE_LENTOS=1`.
 
 ### Regresión contra una referencia
 
-Si se dispone del ejecutor y del JSON de referencia compatibles:
-
 ```powershell
-py regresion_cohete_v12.12.2.py cohete_v12.13.6.py --ref regresion_ref_v12.13.3.json
+py tests\regresion_cohete.py
 ```
+
+Por defecto prueba `src/simulador/cohete.py` contra `tests/regresion_ref.json`. Para regenerar la referencia usa `--guardar`; las referencias de otras plataformas o versiones de bibliotecas pueden diferir en el redondeo.
 
 Una comparación satisfactoria indica coincidencia con los escenarios y tolerancias de esa referencia. No significa que todas las misiones hayan completado un vuelo ni sustituye la validación física externa.
 
 ## Consideraciones y Dependencias Externas
 
-### JPL Horizons y SPICE
+### Efemérides: REBOUND, SPICE y Horizons+Verlet
 
-La ruta `Horizons+Verlet` consulta JPL Horizons para obtener condiciones iniciales y después propaga Sol y Luna con un modelo simplificado de Verlet 3D. La ruta SPICE se encuentra disponible mediante PyMCel/SpiceyPy. Las consultas externas requieren conexión a Internet y pueden fallar temporalmente por disponibilidad del servicio.
+- **`rebound` (por defecto):** integra Sol, Tierra, Luna y los baricentros planetarios con REBOUND/IAS15, con condiciones iniciales de SPICE. Sin SPICE usa Horizons para Sol y Luna, sin planetas.
+- **`spice`:** consulta directa a los kernels (PyMCel/SpiceyPy). La primera vez descarga ~100 MB.
+- **`horizons_verlet`:** condiciones iniciales de JPL Horizons y Verlet 3D simplificado.
 
-### Resultado medido de Horizons+Verlet
+Las consultas externas requieren Internet y pueden fallar temporalmente.
 
-Para la época `2026-01-01T00:00:00 UTC`, con paso Verlet de 20 s, tabla cada 600 s y muestras en 1, 2, 5 y 10 días, se obtuvo:
+### Validación frente a SPICE
 
-| Tiempo | Error de posición Luna | Error de velocidad Luna | Error de posición Sol | Error de velocidad Sol |
-|---:|---:|---:|---:|---:|
-| 1 día | 0,004952 km | 0,000115 m/s | 140,790094 km | 3,258389 m/s |
-| 2 días | 0,019642 km | 0,000223 m/s | 560,394295 km | 6,461563 m/s |
-| 5 días | 0,110845 km | 0,000532 m/s | 3.348,822300 km | 14,997956 m/s |
-| 10 días | 0,439146 km | 0,000850 m/s | 11.537,269652 km | 23,677544 m/s |
+Época `2026-01-01T00:00:00 UTC`, 10 días, posición 3D (umbrales del motor: Luna 5 km, Sol 50 km):
 
-El validador utiliza umbrales de 5 km para la posición lunar y 50 km para la posición solar. La Luna quedó dentro del umbral, pero el Sol lo superó ampliamente; por tanto, el resultado global fue **NO ACEPTADA**. Esta medición corresponde a una época y a un horizonte concretos, y no demuestra la misma precisión para otras fechas.
+| | Verlet | REBOUND Sol-Tierra-Luna | REBOUND + planetas |
+|---|---:|---:|---:|
+| Luna | 0,44 km | 0,21 km | 0,33 km |
+| Sol | 11 537 km | 49,5 km | 0,07 km |
 
-Para repetir la validación, coloca `validador_horizons.py` junto al motor y ejecuta:
+El Verlet supera el umbral solar porque trata Sol-Tierra como dos cuerpos y omite el movimiento de la Tierra alrededor del baricentro Tierra-Luna (±4 670 km); REBOUND corrige ese modelo. Es una sola época y horizonte: repite con otras fechas.
 
 ```powershell
-py .\validador_horizons.py .\cohete_v12.13.6.py --timeout 60
+py herramientas\validar_rebound.py src\simulador\cohete.py 2026-06-15T00:00:00 10
 ```
-
-El informe se guarda como `validacion_horizons_verlet_v12.13.6.json`, junto al motor. Si una consulta falla, el validador conserva un JSON parcial para diagnóstico; un informe parcial no es una validación aprobada.
 
 ### Alcance y simplificaciones
 
 - El cohete se modela en 2D; las efemérides de Sol y Luna de la ruta `Horizons+Verlet` se propagan en 3D.
-- El modelo de efemérides es simplificado y no incorpora perturbaciones planetarias, J2 terrestre ni relatividad.
-- En la ruta `Horizons+Verlet`, Sol–Tierra se trata como un problema de dos cuerpos; la Luna incluye la marea solar. No es un integrador N-cuerpos mutuo.
+- Las efemérides con REBOUND incluyen masas puntuales (y planetas si hay SPICE), sin J2 terrestre, figura de la Luna ni relatividad; la ruta Verlet no incorpora planetas.
+- En la ruta `Horizons+Verlet`, Sol–Tierra se trata como un problema de dos cuerpos; la Luna incluye la marea solar. No es N-cuerpos mutuo.
 - El vehículo no modifica las trayectorias de Sol o Luna: se trata como partícula de prueba.
 - La reentrada se confirma mediante cruce de altitud; no incluye modelo térmico ni ablación.
 - TLI es una transferencia simplificada y no equivale a navegación translunar con correcciones de trayectoria.
 - La captura LOI es opcional, 2D y provisional.
-- La discrepancia solar medida está siendo investigada. No se debe presentar la ruta completa `Horizons+Verlet` como validada globalmente.
+- La discrepancia solar de `Horizons+Verlet` está explicada (modelo a dos cuerpos); esa ruta no debe presentarse como validada. Ver `docs/NOTAS.md`.
 
 ## Licencia
 
