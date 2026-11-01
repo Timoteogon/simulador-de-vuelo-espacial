@@ -4,6 +4,17 @@ Desde 12.13.8 el motor vive en un único archivo, `src/simulador/cohete.py`, sin
 La versión se lleva en `pyproject.toml`, `simulador.__version__`, el encabezado de cambios de `cohete.py`
 y los mensajes de commit. Las notas por versión anteriores (hasta 12.13.6) no se incluyen aquí.
 
+## 12.13.9 — robustez ante estados no finitos
+Revisión externa de 12.13.8 evaluada contra el código; se aplicó lo verificado:
+- Estado no finito tras integrar → fallo controlado del integrador (antes `NaN < 0` era falso y el impacto nunca se detectaba).
+- `_elementos_orbitales` rechaza estados no finitos; las funciones de evento de `solve_ivp` devuelven "sin corte".
+- `_z_luna` ya no oculta errores de programación; `_error_refresco_visto` se inicializa en el constructor.
+
+Revisado y descartado (con motivo): `_kepler_E` y `_estado_pymcel` (el respaldo Kepler de Sol/Luna tiene e < 0,06 y siempre converge;
+añadir `RuntimeError` al `except` ocultaría la guarda de la caché); copia «solo física» en `_error_base_gen` (copiar el historial cuesta
+~0,4 ms, no 40 ms); tolerancia de `_k_quema` (el error de Δv es ~1e-7 m/s, no 0,08 m/s); validación de booleanos (ya existe).
+Pendientes sin urgencia: constantes con nombre, `logging`, partir `Config`, dividir el monolito en módulos.
+
 ## 12.13.8 — carga de SPICE y efemérides lunares con REBOUND
 La física del vuelo no cambia.
 

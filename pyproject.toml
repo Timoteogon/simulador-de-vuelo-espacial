@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "simulador-de-vuelo-espacial"
-version = "12.13.8"
+version = "12.13.9"
 description = "Simulador de trayectorias de cohetes de dos etapas en Python (ascenso, órbita, TLI, escape, desórbita y vuelo lunar)"
 readme = "README.md"
 requires-python = ">=3.11"
