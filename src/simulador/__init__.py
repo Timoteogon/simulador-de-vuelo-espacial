@@ -1,7 +1,8 @@
 """Simulador de vuelo espacial.
 
-Simula trayectorias de cohetes con integración numérica,
-incluyendo empuje, consumo de combustible y gravedad variable.
+Simula cohetes de dos etapas en 2D (ascenso, órbita, GTO, TLI, escape, desórbita y
+vuelo lunar) con integración numérica, efemérides de Sol y Luna (REBOUND, SPICE u
+Horizons+Verlet) y una interfaz gráfica Tkinter. El motor está en `simulador.cohete`.
 """
 
-__version__ = "0.1.0"
+__version__ = "12.13.8"
