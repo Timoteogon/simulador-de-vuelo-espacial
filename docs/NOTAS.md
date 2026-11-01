@@ -4,6 +4,13 @@ Desde 12.13.8 el motor vive en un único archivo, `src/simulador/cohete.py`, sin
 La versión se lleva en `pyproject.toml`, `simulador.__version__`, el encabezado de cambios de `cohete.py`
 y los mensajes de commit. Las notas por versión anteriores (hasta 12.13.6) no se incluyen aquí.
 
+## 12.13.10 — cierre de las vías de escape de 12.13.9
+Segunda revisión externa; verificado y aplicado:
+- Los eventos de `solve_ivp` atrapan el `ValueError` de `_elementos_orbitales` (px/py = ±Inf pasaban la guarda).
+- `_integrar_tramo`/`_integrar_tramo_v12` rechazan resultados no finitos (cubre también la bisección de corte); el mensaje lleva el estado.
+- Un plan que lanza una excepción cierra la misión como NO CUMPLIDA en vez de quedar a medias.
+Se mantienen descartados A3 y B1 (ver 12.13.9). Solo cosmético y sin hacer: renombrar `mu_st` en el kernel numba.
+
 ## 12.13.9 — robustez ante estados no finitos
 Revisión externa de 12.13.8 evaluada contra el código; se aplicó lo verificado:
 - Estado no finito tras integrar → fallo controlado del integrador (antes `NaN < 0` era falso y el impacto nunca se detectaba).
