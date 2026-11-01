@@ -87,3 +87,16 @@ La física y las fórmulas (Laplace, M.A.R.E., E.R.E., Kepler, CRTBP, Standish) 
 - Si se añade el virial, usar `E_total` para no chocar con la anomalía excéntrica `E`.
 
 Verificado: pytest (38 + 1 omitida) y la regresión completa (EXIT=0, mismos resultados contra la referencia).
+
+## Pendientes
+### Cometas y otros cuerpos menores como destino
+Hoy las ventanas interplanetarias solo aceptan planetas (elementos de Standish) y no hay vuelo interplanetario propagado.
+Idea acordada: el usuario introduce a mano los elementos orbitales osculadores del cometa y su época (a o q, e, i, Ω, ω, M o tiempo del perihelio);
+de ahí se obtienen posición y velocidad y se propaga su trayectoria perturbada con REBOUND (Sol, planetas y, si hace falta, Júpiter con su masa real).
+Puntos a resolver al implementarlo:
+- Elementos → estado también para e ≥ 1 (hiperbólicas y casi parabólicas), que `_kepler_E` no cubre (solo e < 1).
+- Que Lambert y la malla de ventanas tomen estados de un cuerpo arbitrario en vez de Standish.
+- Propagar la nave en el marco heliocéntrico, no solo con cónicas empalmadas.
+- Límite del método: con elementos de una sola época y sin fuerzas no gravitacionales (desgasificación) el error de posición crece rápido;
+  habrá que avisarlo y, si se puede, tomar elementos recientes de Horizons/SBDB.
+

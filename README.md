@@ -235,6 +235,7 @@ py herramientas\validar_rebound.py src\simulador\cohete.py 2026-06-15T00:00:00 1
 - En la ruta `Horizons+Verlet`, Sol–Tierra se trata como un problema de dos cuerpos; la Luna incluye la marea solar. No es N-cuerpos mutuo.
 - El vehículo no modifica las trayectorias de Sol o Luna: se trata como partícula de prueba.
 - La reentrada se confirma mediante cruce de altitud; no incluye modelo térmico ni ablación.
+- Los destinos interplanetarios son solo planetas; cometas y asteroides no están soportados (pendiente, ver `docs/NOTAS.md`).
 - TLI es una transferencia simplificada y no equivale a navegación translunar con correcciones de trayectoria.
 - La captura LOI es opcional, 2D y provisional.
 - La discrepancia solar de `Horizons+Verlet` está explicada (modelo a dos cuerpos); esa ruta no debe presentarse como validada. Ver `docs/NOTAS.md`.
