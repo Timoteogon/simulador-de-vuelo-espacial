@@ -105,6 +105,11 @@ Cambios de 11.21.1 (endurecimiento; sin cambio de arquitectura):
   - Esta sección: limitaciones heredadas frente a las de la localización de
     eventos. Nada de la física cambia salvo lo del corte indicado arriba.
 
+Cambios de 12.13.12 (cierre de la tercera revisión; la física no cambia):
+  - `_validar_config` recorre TODOS los campos bool de Config (antes una lista a mano dejaba fuera
+    `cd_vs_mach` y `rotacion_terrestre`).
+  - Docstring de `_throttle` corregido: `_throttle_g_limit` también puede bajar de THROTTLE_MIN.
+
 Cambios de 12.13.11 (limpieza de una tercera revisión; la física no cambia):
   - `_validar_config` exige bool de verdad en los ocho campos booleanos (un "false" o un 1 pasaban).
   - `_paso_simulacion` cancela el planificador externo si la física lanza (antes quedaba un proceso huérfano).
@@ -845,7 +850,7 @@ from array import array
 from bisect import bisect_right
 from collections import OrderedDict
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields as _campos_dc
 from pathlib import Path
 from typing import Callable, Optional
 from datetime import datetime, timezone, timedelta
@@ -2467,10 +2472,11 @@ class Config:
                f"LUNAR_MARGEN_DV={self.LUNAR_MARGEN_DV!r}: debe ser >= 1")
         exigir(isinstance(self.LUNAR_LOI, bool), f"LUNAR_LOI={self.LUNAR_LOI!r}: debe ser bool")
         # (12.13.11) Un "false" (texto) o un 1 de un JSON mal tipado serían verdaderos en silencio.
-        for nombre in ("suborbital_cutoff_por_apogeo", "empuje_vs_altitud", "usar_terceros_cuerpos",
-                       "usar_marco_movil", "mostrar_crtbp", "escala_log", "mostrar_grilla_tierra"):
-            v = getattr(self, nombre)
-            exigir(isinstance(v, bool), f"{nombre}={v!r}: debe ser bool (True/False)")
+        # Se recorren TODOS los campos anotados como bool (no una lista a mano: así no se queda ninguno fuera).
+        for campo in _campos_dc(self):
+            if str(campo.type) == "bool":
+                v = getattr(self, campo.name)
+                exigir(isinstance(v, bool), f"{campo.name}={v!r}: debe ser bool (True/False)")
         if self.LUNAR_LOI:
             exigir(fin(self.LUNAR_ORBITA_ALT) and self.LUNAR_ORBITA_ALT >= 10_000.0,
                    f"LUNAR_ORBITA_ALT={self.LUNAR_ORBITA_ALT!r}: con LOI debe ser >= 10 km")
@@ -4632,9 +4638,12 @@ class Simulacion:
     # no aplica); el throttle final es el MÍNIMO de todos.
     # ========================================================
     def _throttle(self) -> float:
-        """Mínimo de los reguladores. Cada uno devuelve un factor en [THROTTLE_MIN, 1], salvo
-        `_throttle_ventana_apogeo`, que devuelve 0.0 a propósito (apagado controlado lejos del
-        apogeo en tripulada/directo): por eso el resultado puede ser 0, no solo >= THROTTLE_MIN."""
+        """Mínimo de los reguladores; el resultado está en [0, 1], NO necesariamente >= THROTTLE_MIN.
+        La mayoría respeta el piso THROTTLE_MIN, pero dos pueden bajar de él a propósito:
+        `_throttle_ventana_apogeo` devuelve 0.0 (apagado controlado lejos del apogeo en
+        tripulada/directo) y `_throttle_g_limit` devuelve empuje_max/empuje_nominal recortado a
+        [0, 1], que cae por debajo de THROTTLE_MIN si G_MAX_TRIPULADA es muy bajo (con el valor
+        nominal de 4 g no ocurre)."""
         return min(
             self._throttle_circularizacion(),
             self._throttle_g_limit(),
