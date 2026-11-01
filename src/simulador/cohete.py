@@ -105,6 +105,13 @@ Cambios de 11.21.1 (endurecimiento; sin cambio de arquitectura):
   - Esta sección: limitaciones heredadas frente a las de la localización de
     eventos. Nada de la física cambia salvo lo del corte indicado arriba.
 
+Cambios de 12.13.11 (limpieza de una tercera revisión; la física no cambia):
+  - `_validar_config` exige bool de verdad en los ocho campos booleanos (un "false" o un 1 pasaban).
+  - `_paso_simulacion` cancela el planificador externo si la física lanza (antes quedaba un proceso huérfano).
+  - `AlmacenHistorial`: con el disco caído, `n` y `segmentos` vuelven a 0 en vez de prometer filas inexistentes.
+  - Constantes con nombre (TAU_AMORTIGUACION_RADIAL_S, FRAC_MARGEN_APOGEO_GTO, FRAC_MARGEN_RP_THROTTLE,
+    FACTOR_RADIO_FINO_LUNAR y límites); contratos de `_throttle`, `_margen_corte` y `aplicar_preset` documentados.
+
 Cambios de 12.13.10 (cierra las vías de escape de 12.13.9; el vuelo nominal no cambia):
   - `_corte_por_estado` y `_margen_corte` atrapan ValueError de `_elementos_orbitales`
     (px o py = ±Inf con velocidades finitas pasaban la guarda anterior).
@@ -2459,6 +2466,11 @@ class Config:
         exigir(fin(self.LUNAR_MARGEN_DV) and self.LUNAR_MARGEN_DV >= 1.0,
                f"LUNAR_MARGEN_DV={self.LUNAR_MARGEN_DV!r}: debe ser >= 1")
         exigir(isinstance(self.LUNAR_LOI, bool), f"LUNAR_LOI={self.LUNAR_LOI!r}: debe ser bool")
+        # (12.13.11) Un "false" (texto) o un 1 de un JSON mal tipado serían verdaderos en silencio.
+        for nombre in ("suborbital_cutoff_por_apogeo", "empuje_vs_altitud", "usar_terceros_cuerpos",
+                       "usar_marco_movil", "mostrar_crtbp", "escala_log", "mostrar_grilla_tierra"):
+            v = getattr(self, nombre)
+            exigir(isinstance(v, bool), f"{nombre}={v!r}: debe ser bool (True/False)")
         if self.LUNAR_LOI:
             exigir(fin(self.LUNAR_ORBITA_ALT) and self.LUNAR_ORBITA_ALT >= 10_000.0,
                    f"LUNAR_ORBITA_ALT={self.LUNAR_ORBITA_ALT!r}: con LOI debe ser >= 10 km")
@@ -2521,6 +2533,9 @@ class Config:
         Ajusta los parámetros operativos a los valores típicos del
         modo elegido. El usuario puede sobreescribirlos después en la
         GUI; esto solo los pre-carga.
+
+        Ojo: también REESCRIBE `usar_marco_movil` (True solo en tli/escape): si el usuario lo
+        activó a mano y cambia de modo, el preset lo pisa.
         """
         # El preset también fija usar_marco_movil: solo tli/escape lo
         # necesitan (la nave cruza la órbita lunar); el resto, apagado.
@@ -3152,7 +3167,7 @@ def direccion_empuje_mantener_altura(px: float, py: float, vx: float, vy: float,
     if a_empuje < 1e-6:
         return tx, ty
     g_local = MU_T / (r * r)
-    a_radial_requerida = (g_local - v_tangencial * v_tangencial / r) - v_radial / 20.0
+    a_radial_requerida = (g_local - v_tangencial * v_tangencial / r) - v_radial / TAU_AMORTIGUACION_RADIAL_S
     seno = float(_clip(a_radial_requerida / a_empuje, -0.7071, 0.7071))
     coseno = math.sqrt(1.0 - seno * seno)
     return coseno * tx + seno * rx, coseno * ty + seno * ry
@@ -3703,6 +3718,14 @@ _SERIES_HISTORIAL_FASE = ("hist_fase", "tray_wfase")
 # empuje pleno hasta quedar ~TAU s de quema y luego proporcional.
 TAU_REGULACION_THROTTLE = 5.0
 
+# (12.13.11) Constantes que estaban como números sueltos (mismos valores):
+TAU_AMORTIGUACION_RADIAL_S = 20.0     # guiado mantener-altura: amortigua v_radial con constante de tiempo [s]
+FRAC_MARGEN_APOGEO_GTO = 0.10         # primera quema GTO: reduce el empuje en el último 10 % del apogeo objetivo
+FRAC_MARGEN_RP_THROTTLE = 0.05        # regulación por periapsis: margen = 5 % del periapsis objetivo (mín. THROTTLE_MARGEN)
+FACTOR_RADIO_FINO_LUNAR = 1.5         # paso fino lunar dentro de 1,5 x la distancia objetivo...
+RADIO_FINO_LUNAR_MIN_R_LUNA = 5.0     # ...pero al menos 5 radios lunares
+RADIO_FINO_LUNAR_MAX_M = 20_000_000.0 # ...y como mucho 20 000 km
+
 
 def _limpiar_almacen(estado: dict) -> None:
     """Cierra y borra el archivo temporal de un AlmacenHistorial (también como finalizador)."""
@@ -3804,6 +3827,9 @@ class AlmacenHistorial:
             self._estado["f"].flush()
         except OSError as exc:
             self.ok = False
+            # (12.13.11) Con el disco caído no hay filas legibles: `n` y `segmentos` no deben
+            # prometer filas que no existen (antes seguían creciendo con `ok` en False).
+            self.n, self.segmentos = 0, []
             print(f"⚠ No se pudo escribir el historial a disco ({exc}); lo podado se descarta "
                   "(el historial completo quedará incompleto).")
         self._pend, self._n_pend = [], 0
@@ -4606,6 +4632,9 @@ class Simulacion:
     # no aplica); el throttle final es el MÍNIMO de todos.
     # ========================================================
     def _throttle(self) -> float:
+        """Mínimo de los reguladores. Cada uno devuelve un factor en [THROTTLE_MIN, 1], salvo
+        `_throttle_ventana_apogeo`, que devuelve 0.0 a propósito (apagado controlado lejos del
+        apogeo en tripulada/directo): por eso el resultado puede ser 0, no solo >= THROTTLE_MIN."""
         return min(
             self._throttle_circularizacion(),
             self._throttle_g_limit(),
@@ -4645,7 +4674,7 @@ class Simulacion:
         en los últimos 10 % de apogeo antes del corte."""
         cfg = self.config
         falta_ra = cfg.APOGEO_OBJETIVO - orb["ra"]
-        margen_ra = 0.10 * cfg.APOGEO_OBJETIVO
+        margen_ra = FRAC_MARGEN_APOGEO_GTO * cfg.APOGEO_OBJETIVO
         if falta_ra >= margen_ra:
             return 1.0
         if falta_ra <= 0.0:
@@ -4675,7 +4704,7 @@ class Simulacion:
         falta = rp_objetivo - orb["rp"]
         # El margen se escala con el objetivo (5 %): en LEO sigue
         # siendo THROTTLE_MARGEN (30 km); en GEO ~1750 km.
-        margen = max(cfg.THROTTLE_MARGEN, 0.05 * rp_objetivo)
+        margen = max(cfg.THROTTLE_MARGEN, FRAC_MARGEN_RP_THROTTLE * rp_objetivo)
         if falta <= 0.0:
             return cfg.THROTTLE_MIN
         if falta >= margen:
@@ -5557,7 +5586,8 @@ class Simulacion:
 
     def _margen_corte(self, y, desfase: float = 0.0) -> float:
         """(12.1.0) Función escalar continua del estado con
-        margen >= 0 <=> `_corte_por_estado(y)`: las condiciones en Y son un
+        margen >= 0 <=> `_corte_por_estado(y)` (con `desfase` = 0, salvo el conjunto de medida cero
+        ecc == ecc_max; con `desfase` > 0 la frontera del evento se corre `desfase` hacia dentro): las condiciones en Y son un
         min, las alternativas un max. Su cruce de negativo a positivo es el
         evento de corte de solve_ivp. Unidades mezcladas (m, m/s, J/kg): solo
         importa el signo y la continuidad. `desfase` (>= 0) se resta de los
@@ -6402,8 +6432,9 @@ class Simulacion:
             # El umbral anterior era 3*R_SOI (~198 000 km), por lo que el
             # paso de 5 s se aplicaba durante días y daba la impresión de
             # congelación. Refinamos solo cerca del perilunio/superficie.
-            radio_fino = max(5.0 * R_LUNA,
-                             min(1.5 * self._dist_objetivo_lunar(), 20_000_000.0))
+            radio_fino = max(RADIO_FINO_LUNAR_MIN_R_LUNA * R_LUNA,
+                             min(FACTOR_RADIO_FINO_LUNAR * self._dist_objetivo_lunar(),
+                                 RADIO_FINO_LUNAR_MAX_M))
             if self._lunar_d_luna < radio_fino:
                 dt = min(dt, 5.0)
             if (est.fase == "translunar" and cfg.LUNAR_LOI and self._loi is None
@@ -10109,6 +10140,7 @@ class InterfazSimulacion:
             traceback.print_exc()
             self._mostrar_error(f"⚠ Error de simulación: {type(e).__name__}: {e}"[:200])
             self._pasos_restantes = None
+            self._cancelar_planificador()     # (12.13.11) el proceso hijo no debe quedar huérfano
             self._finalizar_bucle_simulacion()
             return
         if restantes > 0 and not est.simulacion_terminada:
