@@ -428,7 +428,7 @@ Cambios de 12.6.3 (corte LOI sin aceptación silenciosa):
     converge en <= 6 iteraciones en las geometrías nominales.
 
 Cambios de 12.6.2 (endurecimiento de la LOI; los vuelos nominales no cambian):
-  - Corte de la quema LOI: secante con intervalo [0, h0] protegido (si el
+  - Corte de la quema LOI: secante con intervalo [0, dt0] protegido (si el
     denominador no es finito o la corrección sale del intervalo, bisección),
     hasta |ε − ε_obj| <= LOI_TOL_EPS_REL·|ε_obj| o 12 iteraciones; el residuo y
     si convergió quedan en datos_mision["loi"] (`eps_error_corte`,
@@ -1428,14 +1428,14 @@ def _estado_pymcel(cuerpo: str, fecha_lanzamiento: str, t_sim: float,
             print(f"⚠ pymcel: consulta_spice falló ({nombre}: {e}); "
                   f"usando Kepler simplificado")
         return _estado_kepler_simplificado(cuerpo, t_epoca)
-    h = _EPH_PASO
-    s = t_sim / h - k
+    dt = _EPH_PASO
+    s = t_sim / dt - k
     x0, y0, vx0, vy0 = tabla[k]
     x1, y1, vx1, vy1 = tabla[k + 1]
     h00, h10, h01, h11, d00, d10, d01, d11 = _hermite_coefs(s)
-    d00, d01 = d00 / h, d01 / h
-    px = h00 * x0 + h10 * h * vx0 + h01 * x1 + h11 * h * vx1
-    py = h00 * y0 + h10 * h * vy0 + h01 * y1 + h11 * h * vy1
+    d00, d01 = d00 / dt, d01 / dt
+    px = h00 * x0 + h10 * dt * vx0 + h01 * x1 + h11 * dt * vx1
+    py = h00 * y0 + h10 * dt * vy0 + h01 * y1 + h11 * dt * vy1
     vx = d00 * x0 + d10 * vx0 + d01 * x1 + d11 * vx1
     vy = d00 * y0 + d10 * vy0 + d01 * y1 + d11 * vy1
     return (float(px), float(py)), (float(vx), float(vy))
@@ -1863,11 +1863,11 @@ def _fecha_utc_normalizada(fecha_iso: str) -> str:
 
 
 def _sha256_archivo(ruta: Path) -> str:
-    h = hashlib.sha256()
+    sha = hashlib.sha256()
     with ruta.open("rb") as f:
         for bloque in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(bloque)
-    return h.hexdigest()
+            sha.update(bloque)
+    return sha.hexdigest()
 
 
 def _leer_validacion_horizons_verlet(fecha_iso: str):
@@ -2006,24 +2006,24 @@ def vista_tam(s: float, activa: bool = True) -> float:
     return float(R_T * np.log1p((np.e - 1.0) * s / R_T))
 
 
-def _cross_z(omega, vec):
+def _cross_z(Omega, vec):
     x, y = vec
-    return (-omega * y, omega * x)
+    return (-Omega * y, Omega * x)
 
 
-def _inercial_a_rotante(r_in, v_in, omega, theta):
+def _inercial_a_rotante(r_in, v_in, Omega, theta):
     """r_in, v_in: posición/velocidad relativas al origen del marco
     rotante, expresadas en orientación INERCIAL (fija). Devuelve
     (r_rot, v_rot) en el marco rotante."""
     rx, ry = _rot2d(r_in, -theta)
     vx0, vy0 = _rot2d(v_in, -theta)
-    cx, cy = _cross_z(omega, (rx, ry))
+    cx, cy = _cross_z(Omega, (rx, ry))
     return (rx, ry), (vx0 - cx, vy0 - cy)
 
 
-def _rotante_a_inercial(r_rot, v_rot, omega, theta):
+def _rotante_a_inercial(r_rot, v_rot, Omega, theta):
     """Inversa de _inercial_a_rotante."""
-    cx, cy = _cross_z(omega, r_rot)
+    cx, cy = _cross_z(Omega, r_rot)
     v_pre = (v_rot[0] + cx, v_rot[1] + cy)
     r_in = _rot2d(r_rot, theta)
     v_in = _rot2d(v_pre, theta)
@@ -2609,11 +2609,11 @@ ETAPAS_CONFIG = (
 
 
 @_njit(cache=True, nogil=True)
-def _rk4_kernel(px, py, vx, vy, h, n, empuje_x, empuje_y, arrastre_x, arrastre_y,
+def _rk4_kernel(px, py, vx, vy, dt, n, empuje_x, empuje_y, arrastre_x, arrastre_y,
                 masa, perturbacion_x, perturbacion_y, mu):
     """n subpasos RK4 de tamaño h (mismas ecuaciones que `derivadas_marco_tierra`,
     con las fuerzas externas constantes). Compilado con numba si existe."""
-    hm = 0.5 * h
+    hm = 0.5 * dt
     ax0 = (empuje_x + arrastre_x) / masa + perturbacion_x
     ay0 = (empuje_y + arrastre_y) / masa + perturbacion_y
     for _ in range(n):
@@ -2631,12 +2631,12 @@ def _rk4_kernel(px, py, vx, vy, h, n, empuje_x, empuje_y, arrastre_x, arrastre_y
         k3x = vx + hm * k2vx; k3y = vy + hm * k2vy
         k3vx = ax0 - g * qx / r; k3vy = ay0 - g * qy / r
 
-        qx = px + h * k3x; qy = py + h * k3y
+        qx = px + dt * k3x; qy = py + dt * k3y
         r = math.sqrt((qx) * (qx) + (qy) * (qy)); g = mu / (r * r)
-        k4x = vx + h * k3vx; k4y = vy + h * k3vy
+        k4x = vx + dt * k3vx; k4y = vy + dt * k3vy
         k4vx = ax0 - g * qx / r; k4vy = ay0 - g * qy / r
 
-        c = h / 6.0
+        c = dt / 6.0
         px += c * (k1x + 2.0 * k2x + 2.0 * k3x + k4x)
         py += c * (k1y + 2.0 * k2y + 2.0 * k3y + k4y)
         vx += c * (k1vx + 2.0 * k2vx + 2.0 * k3vx + k4vx)
@@ -2670,8 +2670,8 @@ def _elementos_orbitales(px: float, py: float, vx: float, vy: float) -> dict:
         rp, ra              : periapsis/apoapsis como ALTITUD sobre la superficie (m)
         rp_radio, ra_radio  : mismas distancias desde el centro (m)
         a, b, c, omega      : parámetros de la elipse (NaN si no es cerrada)
-    Notación: `omega` es la LONGITUD del periapsis en 2D (≡ argumento del periapsis porque Ω=0);
-    `Lz` es el M.A.R.E. h = |r×v| (en 2D h ≡ h_z). `_ELEM_PLANETAS` usa en cambio la convención de
+    Notación: `omega` (ω) es la LONGITUD del periapsis en 2D (≡ argumento del periapsis porque Ω=0);
+    `h` es el M.A.R.E. = |r×v| (en 2D h ≡ h_z). `_ELEM_PLANETAS` usa en cambio la convención de
     Standish (a, e, i, L, ϖ, Ω) con ϖ = Ω + ω: no son intercambiables directamente.
         es_elipse           : True si la trayectoria es una elipse cerrada
     """
@@ -2681,7 +2681,7 @@ def _elementos_orbitales(px: float, py: float, vx: float, vy: float) -> dict:
     v2 = vx * vx + vy * vy
     mu = MU_T
     eps = 0.5 * v2 - mu / r
-    Lz  = px * vy - py * vx
+    h  = px * vy - py * vx
 
     rv = px * vx + py * vy
     ex = ((v2 - mu / r) * px - rv * vx) / mu
@@ -2699,8 +2699,8 @@ def _elementos_orbitales(px: float, py: float, vx: float, vy: float) -> dict:
         ra_radio = a * (1.0 + ecc)
     else:
         a = b = c = float("nan")
-        if abs(Lz) > 1e-6 and ecc > 1e-12:
-            p = (Lz * Lz) / mu
+        if abs(h) > 1e-6 and ecc > 1e-12:
+            p = (h * h) / mu
             rp_radio = p / (1.0 + ecc)
         else:
             rp_radio = r
@@ -2851,15 +2851,15 @@ def factor_cd_mach(mach: float) -> float:
     return f0 + (f1 - f0) * (mach - m0) / (m1 - m0)
 
 
-def fuerza_arrastre(h: float, vx: float, vy: float,
+def fuerza_arrastre(alt: float, vx: float, vy: float,
                     Cd: float, area: float, mach: bool = False):
-    rho = densidad_atmosfera(h)
+    rho = densidad_atmosfera(alt)
     v2 = vx * vx + vy * vy
     v = math.sqrt(v2)
     if v == 0.0 or area == 0.0:
         return 0.0, 0.0, 0.0
     if mach and rho > 0.0:
-        Cd = Cd * factor_cd_mach(v / velocidad_sonido(h))
+        Cd = Cd * factor_cd_mach(v / velocidad_sonido(alt))
     arrastre_mag = 0.5 * rho * v2 * Cd * area
     return (-arrastre_mag * vx / v, -arrastre_mag * vy / v, arrastre_mag)
 
@@ -2869,10 +2869,10 @@ def fuerza_arrastre(h: float, vx: float, vy: float,
 # CAPA 2 — FÍSICA PURA (sin estado, sin config, sin efemérides)
 # ============================================================
 def velocidad_relativa_al_aire(px: float, py: float, vx: float, vy: float,
-                               omega: float) -> Vec2:
+                               Omega: float) -> Vec2:
     """Velocidad respecto al aire, que co-rota con la Tierra:
     v_aire = Ω_ef × r = Ω_ef·(py, -px) (sentido horario, como el vuelo)."""
-    return vx - omega * py, vy + omega * px
+    return vx - Omega * py, vy + Omega * px
 
 
 def aceleracion_de_marea(mu_perturbador: float, pos_nave: Vec2,
@@ -2909,12 +2909,12 @@ class LeyV12:
     """(12.0.0) Parámetros de UN tramo de la dinámica 'variable': lo que
     permanece constante en el tramo (throttle, modo de guiado, marea) y lo
     que se evalúa con el estado dentro del ODE (todo lo demás)."""
-    __slots__ = ("omega", "u0_flujo", "flujo", "a_sal", "presion", "empuje_on",
+    __slots__ = ("Omega", "u0_flujo", "flujo", "a_sal", "presion", "empuje_on",
                  "modo", "mantener", "cd", "area", "mach", "pert_x", "pert_y")
 
-    def __init__(self, omega, u0, flujo, a_sal, presion, empuje_on, modo,
+    def __init__(self, Omega, u0, flujo, a_sal, presion, empuje_on, modo,
                  mantener, cd, area, mach, pert_x, pert_y):
-        self.omega = omega
+        self.Omega = Omega
         self.flujo = flujo                  # kg/s (D·throttle)
         self.u0_flujo = u0 * flujo          # empuje de vacío [N]
         self.a_sal = a_sal
@@ -2927,7 +2927,7 @@ class LeyV12:
 
     def apagada(self) -> "LeyV12":
         """Mismo tramo con el motor apagado (cola tras el corte)."""
-        return LeyV12(self.omega, 0.0, 0.0, self.a_sal, self.presion, False,
+        return LeyV12(self.Omega, 0.0, 0.0, self.a_sal, self.presion, False,
                       self.modo, self.mantener, self.cd, self.area, self.mach,
                       self.pert_x, self.pert_y)
 
@@ -2935,9 +2935,9 @@ class LeyV12:
         """Tupla de `derivadas_marco_tierra` para el coast libre (RK4): arrastre
         evaluado en `y`, sin empuje."""
         px, py, vx, vy, m = y[0], y[1], y[2], y[3], y[4]
-        h = math.hypot(px, py) - R_T
-        vax, vay = velocidad_relativa_al_aire(px, py, vx, vy, self.omega)
-        ax_, ay_, _ = fuerza_arrastre(h, vax, vay, self.cd, self.area, self.mach)
+        alt = math.hypot(px, py) - R_T
+        vax, vay = velocidad_relativa_al_aire(px, py, vx, vy, self.Omega)
+        ax_, ay_, _ = fuerza_arrastre(alt, vax, vay, self.cd, self.area, self.mach)
         return (0.0, 0.0, ax_, ay_, m, self.pert_x, self.pert_y)
 
 
@@ -2954,9 +2954,9 @@ def derivadas_v12(t, y, ley):
     g = MU_T / (r * r)
     ax = -g * px / r + ley.pert_x
     ay = -g * py / r + ley.pert_y
-    h = r - R_T
-    vax, vay = velocidad_relativa_al_aire(px, py, vx, vy, ley.omega)
-    dx, dy, _ = fuerza_arrastre(h, vax, vay, ley.cd, ley.area, ley.mach)
+    alt = r - R_T
+    vax, vay = velocidad_relativa_al_aire(px, py, vx, vy, ley.Omega)
+    dx, dy, _ = fuerza_arrastre(alt, vax, vay, ley.cd, ley.area, ley.mach)
     ax += dx / m
     ay += dy / m
     dm = 0.0
@@ -2964,13 +2964,13 @@ def derivadas_v12(t, y, ley):
     if ley.empuje_on:
         T = ley.u0_flujo
         if ley.presion:
-            T -= ley.a_sal * presion_atmosfera(h)
+            T -= ley.a_sal * presion_atmosfera(alt)
         if T > 0.0:
             # (12.0.1) solo se quema propelente si hay empuje neto: con la
             # tobera "bloqueada" por la presión (T <= 0) no se consume nada.
             dm = -ley.flujo
             if ley.modo == "gravity_turn":
-                vgx, vgy, _, _ = velocidad_de_guiado(px, py, vx, vy, h, ley.omega)
+                vgx, vgy, _, _ = velocidad_de_guiado(px, py, vx, vy, alt, ley.Omega)
                 ux, uy = calcular_guiado(px, py, vgx, vgy, math.hypot(vgx, vgy),
                                          ley.modo)
             elif ley.modo == "circularizacion" and ley.mantener:
@@ -2984,7 +2984,7 @@ def derivadas_v12(t, y, ley):
     return [vx, vy, ax, ay, dm, ddv]
 
 
-def derivadas_crtbp_rotante(t, y, omega, a, fuerza_x=0.0, fuerza_y=0.0, masa=1.0):
+def derivadas_crtbp_rotante(t, y, Omega, a, fuerza_x=0.0, fuerza_y=0.0, masa=1.0):
     """
     CRTBP dimensional, marco rotante centrado en el baricentro
     Tierra-Luna (Tierra y Luna fijas en (x1,0) y (x2,0)).
@@ -2996,10 +2996,10 @@ def derivadas_crtbp_rotante(t, y, omega, a, fuerza_x=0.0, fuerza_y=0.0, masa=1.0
     x2, y2 = (1.0 - RAZON_MASA_TL) * a, 0.0
     r1 = math.hypot(x - x1, yv - y1)
     r2 = math.hypot(x - x2, yv - y2)
-    ax = (2 * omega * vy + omega ** 2 * x
+    ax = (2 * Omega * vy + Omega ** 2 * x
           - MU_T * (x - x1) / r1 ** 3 - MU_LUNA * (x - x2) / r2 ** 3
           + fuerza_x / masa)
-    ay = (-2 * omega * vx + omega ** 2 * yv
+    ay = (-2 * Omega * vx + Omega ** 2 * yv
           - MU_T * (yv - y1) / r1 ** 3 - MU_LUNA * (yv - y2) / r2 ** 3
           + fuerza_y / masa)
     return [vx, vy, ax, ay]
@@ -3092,7 +3092,7 @@ def calcular_guiado(px: float, py: float, vx: float, vy: float,
 
 
 def velocidad_de_guiado(px: float, py: float, vx: float, vy: float,
-                        altitud: float, omega: float
+                        altitud: float, Omega: float
                         ) -> tuple[float, float, float, float]:
     """Velocidad para el giro por gravedad: respecto al aire en la
     atmósfera (así se guía un cohete real), inercial en el vacío.
@@ -3100,7 +3100,7 @@ def velocidad_de_guiado(px: float, py: float, vx: float, vy: float,
     0 a 200 km, para que el rumbo no dé saltos. Devuelve (vgx, vgy,
     vaire_x, vaire_y): v_guia = v - v_aire·f(altitud)."""
     f = float(_clip(2.0 - altitud / 100_000.0, 0.0, 1.0))
-    aire_x, aire_y = f * omega * py, -f * omega * px
+    aire_x, aire_y = f * Omega * py, -f * Omega * px
     return vx - aire_x, vy - aire_y, aire_x, aire_y
 
 
@@ -3215,66 +3215,66 @@ class EfemeridesNoValidas(RuntimeError):
 
 
 @_njit(cache=True)
-def _herm_pos(tab, t0, h, t):
+def _herm_pos(tab, t0, dt, t):
     """Posición (x, y) de una tabla (N, 4) = (x, y, vx, vy) en nodos cada `h`
     desde `t0`, por Hermite cúbico (la misma interpolación de la caché pymcel)."""
-    k = int(math.floor((t - t0) / h))
+    k = int(math.floor((t - t0) / dt))
     if k < 0:
         k = 0
     if k > tab.shape[0] - 2:
         k = tab.shape[0] - 2
-    s = (t - t0) / h - k
+    s = (t - t0) / dt - k
     h00, h10, h01, h11, _d00, _d10, _d01, _d11 = _hermite_coefs(s)
-    x = h00 * tab[k, 0] + h10 * h * tab[k, 2] + h01 * tab[k + 1, 0] + h11 * h * tab[k + 1, 2]
-    y = h00 * tab[k, 1] + h10 * h * tab[k, 3] + h01 * tab[k + 1, 1] + h11 * h * tab[k + 1, 3]
+    x = h00 * tab[k, 0] + h10 * dt * tab[k, 2] + h01 * tab[k + 1, 0] + h11 * dt * tab[k + 1, 2]
+    y = h00 * tab[k, 1] + h10 * dt * tab[k, 3] + h01 * tab[k + 1, 1] + h11 * dt * tab[k + 1, 3]
     return x, y
 
 
 @_njit(cache=True)
-def _herm_vel(tab, t0, h, t):
+def _herm_vel(tab, t0, dt, t):
     """Velocidad (vx, vy): derivada de la misma interpolación de Hermite."""
-    k = int(math.floor((t - t0) / h))
+    k = int(math.floor((t - t0) / dt))
     if k < 0:
         k = 0
     if k > tab.shape[0] - 2:
         k = tab.shape[0] - 2
-    s = (t - t0) / h - k
+    s = (t - t0) / dt - k
     _h00, _h10, _h01, _h11, d00, d10, d01, d11 = _hermite_coefs(s)
-    d00 = d00 / h
-    d01 = d01 / h
+    d00 = d00 / dt
+    d01 = d01 / dt
     vx = d00 * tab[k, 0] + d10 * tab[k, 2] + d01 * tab[k + 1, 0] + d11 * tab[k + 1, 2]
     vy = d00 * tab[k, 1] + d10 * tab[k, 3] + d01 * tab[k + 1, 1] + d11 * tab[k + 1, 3]
     return vx, vy
 
 
 @_njit(cache=True)
-def _herm_pos3d(tab, t0, h, t, offset):
+def _herm_pos3d(tab, t0, dt, t, offset):
     """Posición XYZ de una tabla [x,y,z,vx,vy,vz] mediante Hermite cúbico."""
-    k = int(math.floor((t - t0) / h))
+    k = int(math.floor((t - t0) / dt))
     if k < 0:
         k = 0
     if k > tab.shape[0] - 2:
         k = tab.shape[0] - 2
-    s = (t - t0) / h - k
+    s = (t - t0) / dt - k
     h00, h10, h01, h11, _d00, _d10, _d01, _d11 = _hermite_coefs(s)
-    x = h00 * tab[k, offset] + h10 * h * tab[k, offset + 3] + h01 * tab[k + 1, offset] + h11 * h * tab[k + 1, offset + 3]
-    y = h00 * tab[k, offset + 1] + h10 * h * tab[k, offset + 4] + h01 * tab[k + 1, offset + 1] + h11 * h * tab[k + 1, offset + 4]
-    z = h00 * tab[k, offset + 2] + h10 * h * tab[k, offset + 5] + h01 * tab[k + 1, offset + 2] + h11 * h * tab[k + 1, offset + 5]
+    x = h00 * tab[k, offset] + h10 * dt * tab[k, offset + 3] + h01 * tab[k + 1, offset] + h11 * dt * tab[k + 1, offset + 3]
+    y = h00 * tab[k, offset + 1] + h10 * dt * tab[k, offset + 4] + h01 * tab[k + 1, offset + 1] + h11 * dt * tab[k + 1, offset + 4]
+    z = h00 * tab[k, offset + 2] + h10 * dt * tab[k, offset + 5] + h01 * tab[k + 1, offset + 2] + h11 * dt * tab[k + 1, offset + 5]
     return x, y, z
 
 
 @_njit(cache=True)
-def _herm_vel3d(tab, t0, h, t, offset):
+def _herm_vel3d(tab, t0, dt, t, offset):
     """Velocidad XYZ: derivada temporal de la misma interpolación Hermite."""
-    k = int(math.floor((t - t0) / h))
+    k = int(math.floor((t - t0) / dt))
     if k < 0:
         k = 0
     if k > tab.shape[0] - 2:
         k = tab.shape[0] - 2
-    s = (t - t0) / h - k
+    s = (t - t0) / dt - k
     _h00, _h10, _h01, _h11, d00, d10, d01, d11 = _hermite_coefs(s)
-    d00 /= h
-    d01 /= h
+    d00 /= dt
+    d01 /= dt
     vx = d00 * tab[k, offset] + d10 * tab[k, offset + 3] + d01 * tab[k + 1, offset] + d11 * tab[k + 1, offset + 3]
     vy = d00 * tab[k, offset + 1] + d10 * tab[k, offset + 4] + d01 * tab[k + 1, offset + 1] + d11 * tab[k + 1, offset + 4]
     vz = d00 * tab[k, offset + 2] + d10 * tab[k, offset + 5] + d01 * tab[k + 1, offset + 2] + d11 * tab[k + 1, offset + 5]
@@ -3308,7 +3308,7 @@ def _acel_geo(x, y, t, luna, sol, t0, ht, mu_t, mu_l, mu_s, usa_sol):
 
 
 @_njit(cache=True, nogil=True)
-def _k_coast(x, y, vx, vy, t, t_fin, h, luna, sol, t0, ht, mu_t, mu_l, mu_s,
+def _k_coast(x, y, vx, vy, t, t_fin, dt, luna, sol, t0, ht, mu_t, mu_l, mu_s,
              usa_sol, r_soi, vigilar):
     """RK4 sin empuje de t a t_fin. Con `vigilar` sigue la distancia a la
     Luna y termina poco después del máximo acercamiento tras entrar a la SOI.
@@ -3321,7 +3321,7 @@ def _k_coast(x, y, vx, vy, t, t_fin, h, luna, sol, t0, ht, mu_t, mu_l, mu_s,
     hz_ent = 0.0
     eps_ent = 0.0
     while t < t_fin - 1.0e-9:
-        hh = h if h < t_fin - t else t_fin - t
+        hh = dt if dt < t_fin - t else t_fin - t
         hm = 0.5 * hh
         a1x, a1y = _acel_geo(x, y, t, luna, sol, t0, ht, mu_t, mu_l, mu_s, usa_sol)
         qx = x + hm * vx
@@ -3391,16 +3391,16 @@ def _conica_selenocentrica(rx, ry, wx, wy, mu_l):
             "r": r, "vr": (rx * wx + ry * wy) / r}
 
 
-def _coast_hasta_periselene(x, y, vx, vy, t, horizonte, h, prm, extension):
+def _coast_hasta_periselene(x, y, vx, vy, t, horizonte, dt, prm, extension):
     """Propaga hasta el horizonte y, si entró a SOI sin pasar el periselene,
     extiende hasta `extension`. Devuelve los 10 valores de `_k_coast` más un
     booleano `periselene_alcanzado`, inferido de que el mínimo no quedó en el
     extremo final de la propagación (si quedó en el borde, no se da por probado)."""
-    a = _k_coast(x, y, vx, vy, t, t + horizonte, h, *prm, R_SOI_LUNA, True)
+    a = _k_coast(x, y, vx, vy, t, t + horizonte, dt, *prm, R_SOI_LUNA, True)
     xa, ya, vxa, vya, ta, d_min, t_dmin, t_ent, hz, eps = a
     x_fin, y_fin, vx_fin, vy_fin, t_fin_prop = xa, ya, vxa, vya, ta
     if t_ent > 0.0 and ta >= t + horizonte - 1.0e-6:
-        b = _k_coast(xa, ya, vxa, vya, ta, ta + extension, h, *prm, R_SOI_LUNA, True)
+        b = _k_coast(xa, ya, vxa, vya, ta, ta + extension, dt, *prm, R_SOI_LUNA, True)
         xb, yb, vxb, vyb, tb, d_min_b, t_dmin_b, _, _, _ = b
         if d_min_b < d_min:
             d_min, t_dmin = d_min_b, t_dmin_b
@@ -3530,24 +3530,24 @@ def _k_quema(x, y, vx, vy, t, m, u0, D, a_sal_p, m_seca, eps_obj, hh, tau,
         if not (empuje > 0.0):
             return x, y, vx, vy, t, m, 3     # sin empuje neto: no consume masa
         flujo = D * thr
-        h = hh
+        dt = hh
         ultimo = False
-        if m - flujo * h < m_seca:
+        if m - flujo * dt < m_seca:
             # (12.9.1) paso final limitado por el propelente: se intenta con lo que queda
             if not (flujo > 0.0):
                 return x, y, vx, vy, t, m, 2
-            h = (m - m_seca) / flujo
-            if not (h > 1e-9):
+            dt = (m - m_seca) / flujo
+            if not (dt > 1e-9):
                 return x, y, vx, vy, t, m, 2
             ultimo = True
-        nx, ny, nvx, nvy = _paso_quema(x, y, vx, vy, t, m, empuje, flujo, h, luna,
+        nx, ny, nvx, nvy = _paso_quema(x, y, vx, vy, t, m, empuje, flujo, dt, luna,
                                        sol, t0, ht, mu_t, mu_l, mu_s, usa_sol)
         if not (math.isfinite(nx) and math.isfinite(ny)
                 and math.isfinite(nvx) and math.isfinite(nvy)):
             return x, y, vx, vy, t, m, 1
         eps_n = 0.5 * (nvx * nvx + nvy * nvy) - mu_t / math.sqrt((nx) * (nx) + (ny) * (ny))
         if eps_n >= eps_obj:
-            hh_base = h                      # (12.9.1) el corte se refina dentro del paso (acortado o no)
+            hh_base = dt                      # (12.9.1) el corte se refina dentro del paso (acortado o no)
             den = eps_n - eps
             if not (den > 0.0):
                 return x, y, vx, vy, t, m, 1
@@ -3557,8 +3557,8 @@ def _k_quema(x, y, vx, vy, t, m, u0, D, a_sal_p, m_seca, eps_obj, hh, tau,
                     return x, y, vx, vy, t, m, 1
                 if f > 1.0:
                     f = 1.0
-                h = f * hh_base
-                nx, ny, nvx, nvy = _paso_quema(x, y, vx, vy, t, m, empuje, flujo, h,
+                dt = f * hh_base
+                nx, ny, nvx, nvy = _paso_quema(x, y, vx, vy, t, m, empuje, flujo, dt,
                                                luna, sol, t0, ht, mu_t, mu_l, mu_s,
                                                usa_sol)
                 eps_n = 0.5 * (nvx * nvx + nvy * nvy) - mu_t / math.sqrt((nx) * (nx) + (ny) * (ny))
@@ -3570,7 +3570,7 @@ def _k_quema(x, y, vx, vy, t, m, u0, D, a_sal_p, m_seca, eps_obj, hh, tau,
             tol_eps = max(1e-9 * abs(eps_obj), 1e-6)  # J/kg; admite ε_obj = 0
             if not (abs(eps_n - eps_obj) <= tol_eps):
                 return x, y, vx, vy, t, m, 1
-            return nx, ny, nvx, nvy, t + h, m - flujo * h, 0
+            return nx, ny, nvx, nvy, t + dt, m - flujo * dt, 0
         if ultimo:
             return x, y, vx, vy, t, m, 2     # se agotó el propelente sin llegar a la energía
         # Progreso numérico: por debajo de este umbral el incremento no se
@@ -3581,8 +3581,8 @@ def _k_quema(x, y, vx, vy, t, m, u0, D, a_sal_p, m_seca, eps_obj, hh, tau,
         else:
             n_estancado = 0
         x, y, vx, vy = nx, ny, nvx, nvy
-        t += h
-        m -= flujo * h
+        t += dt
+        m -= flujo * dt
         if n_estancado >= 100:
             return x, y, vx, vy, t, m, 4
     return x, y, vx, vy, t, m, 1
@@ -3617,7 +3617,7 @@ class EstadoCohete:
     # --- Marco móvil (ver sección MARCO MÓVIL) ---
     marco: str = "tierra"          # "tierra" | "crucero" | "luna"
     crucero_a: float = 0.0         # distancia Tierra-Luna "congelada" al entrar en crucero
-    crucero_omega: float = 0.0     # velocidad angular del marco rotante
+    crucero_Omega: float = 0.0     # velocidad angular del marco rotante
     crucero_theta0: float = 0.0    # ángulo de la línea Tierra-Luna al entrar en crucero
     crucero_t0: float = 0.0        # instante (est.t) de entrada en crucero
 
@@ -3910,11 +3910,11 @@ class Simulacion:
         # se leen de la GUI antes de crear la Simulacion y nada los cambia
         # en vivo). Si algún día la rotación se hace conmutable durante el
         # vuelo, hay que invalidar/recalcular esta caché.
-        self._omega_rotacion = config.omega_efectiva()
+        self._Omega_tierra = config.omega_efectiva()
         # Velocidad inicial por rotación: v = Ω·R_T·cos(lat)·sen(az),
         # tangente al Este. La plataforma está en (0, R_T), cuyo
         # sentido de vuelo (kick) es +x.
-        self.estado.vx = self._omega_rotacion * R_T
+        self.estado.vx = self._Omega_tierra * R_T
         self.estado.speed = abs(self.estado.vx)
         self.etapas = [Etapa(c) for c in ETAPAS_CONFIG]
         # El dv de la 1ª etapa no debe contar la velocidad de plataforma.
@@ -4037,7 +4037,7 @@ class Simulacion:
         (el de las efemérides): r0 = R_T·(cos λ, sin λ), v0 = Ω·R_T·(-sin λ,
         cos λ) (tangente antihoraria, hacia el este). λ = 90° usa los valores
         exactos (0, R_T) y (-Ω·R_T, 0)."""
-        v = self._omega_rotacion * R_T
+        v = self._Omega_tierra * R_T
         if self._lon_90:
             return (0.0, R_T), (-v, 0.0)
         c, sn = self._cos_lon, self._sin_lon
@@ -4867,7 +4867,7 @@ class Simulacion:
     def _angulo_marco_rotante(self) -> float:
         """Ángulo de la línea Tierra-Luna (marco crucero) en est.t."""
         est = self.estado
-        return est.crucero_theta0 + est.crucero_omega * (est.t - est.crucero_t0)
+        return est.crucero_theta0 + est.crucero_Omega * (est.t - est.crucero_t0)
 
     def posicion_display_eci(self) -> Vec2:
         """
@@ -4917,19 +4917,19 @@ class Simulacion:
             return
         (luna_x, luna_y), (luna_vx, luna_vy) = self._estado_cuerpo("luna", est.t)
         a = math.hypot(luna_x, luna_y)
-        omega = math.sqrt(MU_SISTEMA_TL / a ** 3)
+        Omega = math.sqrt(MU_SISTEMA_TL / a ** 3)
         theta0 = float(np.arctan2(luna_y, luna_x))
         bary_x, bary_y = RAZON_MASA_TL * luna_x, RAZON_MASA_TL * luna_y
         bary_vx, bary_vy = RAZON_MASA_TL * luna_vx, RAZON_MASA_TL * luna_vy
         r_rot, v_rot = _inercial_a_rotante(
             (est.px - bary_x, est.py - bary_y),
             (est.vx - bary_vx, est.vy - bary_vy),
-            omega, theta0,
+            Omega, theta0,
         )
         est.px, est.py = r_rot
         est.vx, est.vy = v_rot
         est.marco = "crucero"
-        est.crucero_a, est.crucero_omega = a, omega
+        est.crucero_a, est.crucero_Omega = a, Omega
         est.crucero_theta0, est.crucero_t0 = theta0, est.t
         print(f"🌗 Tierra → crucero (CRTBP) en t={est.t:.1f}s "
               f"(r_tierra={r_tierra/1000:.0f} km)")
@@ -4947,7 +4947,7 @@ class Simulacion:
         if (destino == "luna") or (destino is None and d_luna <= R_SOI_LUNA):
             r_in, v_in = _rotante_a_inercial(
                 (est.px - x_luna_rot, est.py), (est.vx, est.vy),
-                est.crucero_omega, theta,
+                est.crucero_Omega, theta,
             )
             est.px, est.py = r_in
             est.vx, est.vy = v_in
@@ -4971,7 +4971,7 @@ class Simulacion:
             # sumar nada extra); este caso debe ser simétrico.
             r_in, v_in = _rotante_a_inercial(
                 (est.px - x_tierra_rot, est.py), (est.vx, est.vy),
-                est.crucero_omega, theta,
+                est.crucero_Omega, theta,
             )
             est.px, est.py = r_in
             est.vx, est.vy = v_in
@@ -4988,7 +4988,7 @@ class Simulacion:
         x_luna_rot = (1.0 - RAZON_MASA_TL) * est.crucero_a
         dr_rot, dv_rot = _inercial_a_rotante(
             (est.px, est.py), (est.vx, est.vy),
-            est.crucero_omega, theta,
+            est.crucero_Omega, theta,
         )
         est.px, est.py = dr_rot[0] + x_luna_rot, dr_rot[1]
         est.vx, est.vy = dv_rot
@@ -5121,7 +5121,7 @@ class Simulacion:
         empuje_x, empuje_y = empuje * dir_x, empuje * dir_y
 
         v_aire_rel_x, v_aire_rel_y = velocidad_relativa_al_aire(
-            est.px, est.py, est.vx, est.vy, self._omega_rotacion)
+            est.px, est.py, est.vx, est.vy, self._Omega_tierra)
         arrastre_x, arrastre_y = self._calcular_arrastre(v_aire_rel_x, v_aire_rel_y)
         self._registrar_max_q(v_aire_rel_x, v_aire_rel_y)
 
@@ -5129,7 +5129,7 @@ class Simulacion:
         variable = self.config.dinamica == "variable"
         if variable:
             fuerzas = LeyV12(
-                self._omega_rotacion,
+                self._Omega_tierra,
                 etapa.u0 if etapa_encendida else 0.0,
                 flujo_masico, etapa.A_sal if etapa_encendida else 0.0,
                 self.config.empuje_vs_altitud, etapa_encendida,
@@ -5690,7 +5690,7 @@ class Simulacion:
             sol = solve_ivp(
                 derivadas_crtbp_rotante,
                 (est.t, est.t + est.dt), y0,
-                args=(est.crucero_omega, est.crucero_a),
+                args=(est.crucero_Omega, est.crucero_a),
                 method="RK45", rtol=1e-9, atol=1e-6,   # (12.10.1) con |y| ~ 1e8 m manda rtol·|y|, no atol
             )
         else:  # "luna"
@@ -5755,7 +5755,7 @@ class Simulacion:
         atmósfera, inercial en el vacío (ver `velocidad_de_guiado`)."""
         est = self.estado
         return velocidad_de_guiado(est.px, est.py, est.vx, est.vy,
-                                   est.altitud, self._omega_rotacion)
+                                   est.altitud, self._Omega_tierra)
 
     def _aplicar_kick(self) -> None:
         est = self.estado
@@ -6851,12 +6851,12 @@ class Simulacion:
                 return float("inf")
 
             # No simular un paso de 0.25 s si el combustible se agota antes.
-            h_disponible = (m - m_seca) / flujo
-            h = min(0.25, h_disponible)
+            dt_disponible = (m - m_seca) / flujo
+            dt = min(0.25, dt_disponible)
             t_necesario = dv_rest / a
-            if t_necesario <= h:
+            if t_necesario <= dt:
                 return t + t_necesario
-            if h < 0.25 - 1.0e-12:
+            if dt < 0.25 - 1.0e-12:
                 return float("inf")
             dv_rest -= a * 0.25
             m -= flujo * 0.25
@@ -6949,21 +6949,21 @@ class Simulacion:
             est.empuje = 0.0
             self._lunar_fallar("sin empuje neto en la quema LOI")
             return
-        h0 = dt
-        if flujo * h0 >= etapa.m_comb_restante:
-            h0 = etapa.m_comb_restante / flujo
-        if not (math.isfinite(h0) and h0 > 0.0):
+        dt0 = dt
+        if flujo * dt0 >= etapa.m_comb_restante:
+            dt0 = etapa.m_comb_restante / flujo
+        if not (math.isfinite(dt0) and dt0 > 0.0):
             est.empuje = 0.0
             self._lunar_fallar("sin combustible para avanzar la quema LOI")
             return
-        nx, ny, nvx, nvy = _paso_quema_loi(x, y, vx, vy, t, m, empuje, flujo, h0, *prm)
-        eps_n = _eps_selenocentrica(nx, ny, nvx, nvy, t + h0, luna, t0, ht, mu_l)
+        nx, ny, nvx, nvy = _paso_quema_loi(x, y, vx, vy, t, m, empuje, flujo, dt0, *prm)
+        eps_n = _eps_selenocentrica(nx, ny, nvx, nvy, t + dt0, luna, t0, ht, mu_l)
         if not math.isfinite(eps_n):               # (12.13.4) antes de usarla para decidir el corte
             est.empuje = 0.0
             self._msg_fallo_integrador = "energía selenocéntrica no finita en la quema LOI"
             self._fallo_integrador("quema LOI")
             return
-        h = h0
+        dt_sub = dt0
         cortado = eps_n <= eps_obj
         if cortado:
             # (12.6.2) corte: secante sobre h con intervalo [lo, hi] (en lo aún no
@@ -6971,28 +6971,28 @@ class Simulacion:
             # intervalo, bisección. Para al cumplir la tolerancia o tras
             # LOI_MAX_ITER_CORTE; el residuo queda registrado.
             tol = LOI_TOL_EPS_REL * abs(eps_obj)
-            lo_h, hi_h = 0.0, h0
+            lo_dt, hi_dt = 0.0, dt0
             den = eps_n - eps
             f = (eps_obj - eps) / den if den != 0.0 and math.isfinite(den) else 0.5
             err = eps_n - eps_obj
             n_it = 0
             for _ in range(LOI_MAX_ITER_CORTE):
                 n_it += 1
-                h = f * h0
-                if not (lo_h < h < hi_h):
-                    h = 0.5 * (lo_h + hi_h)
-                nx, ny, nvx, nvy = _paso_quema_loi(x, y, vx, vy, t, m, empuje, flujo, h, *prm)
-                eps_n = _eps_selenocentrica(nx, ny, nvx, nvy, t + h, luna, t0, ht, mu_l)
+                dt_sub = f * dt0
+                if not (lo_dt < dt_sub < hi_dt):
+                    dt_sub = 0.5 * (lo_dt + hi_dt)
+                nx, ny, nvx, nvy = _paso_quema_loi(x, y, vx, vy, t, m, empuje, flujo, dt_sub, *prm)
+                eps_n = _eps_selenocentrica(nx, ny, nvx, nvy, t + dt_sub, luna, t0, ht, mu_l)
                 err = eps_n - eps_obj
                 if abs(err) <= tol:
                     break
                 if err > 0.0:
-                    lo_h = h
+                    lo_dt = dt_sub
                 else:
-                    hi_h = h
+                    hi_dt = dt_sub
                 den = eps_n - eps
-                f = ((h / h0) * (eps_obj - eps) / den
-                     if den != 0.0 and math.isfinite(den) else 0.5 * (lo_h + hi_h) / h0)
+                f = ((dt_sub / dt0) * (eps_obj - eps) / den
+                     if den != 0.0 and math.isfinite(den) else 0.5 * (lo_dt + hi_dt) / dt0)
             loi["eps_error_corte"] = float(err)
             loi["corte_convergido"] = bool(abs(err) <= tol)
             loi["iter_corte"] = n_it
@@ -7001,26 +7001,26 @@ class Simulacion:
                 self._lunar_fallar(f"LOI: corte sin converger tras {n_it} iteraciones "
                                    f"(residuo {err:.3g} J/kg, tolerancia {tol:.3g})")
                 return
-        m_media = m - 0.5 * flujo * h
-        etapa.consumir(flujo, h)
-        etapa.dv_prop += empuje / m_media * h
+        m_media = m - 0.5 * flujo * dt_sub
+        etapa.consumir(flujo, dt_sub)
+        etapa.dv_prop += empuje / m_media * dt_sub
         est.empuje = 0.0 if cortado else empuje
         est.arrastre_mag = 0.0
         if cortado:
-            loi["cortado"], loi["t_cut"] = True, t + h
+            loi["cortado"], loi["t_cut"] = True, t + dt_sub
         # corte o sin combustible a mitad de paso: coast del resto del paso
-        if cortado or h < dt - 1.0e-12:
-            resto = dt - h
+        if cortado or dt_sub < dt - 1.0e-12:
+            resto = dt - dt_sub
             if resto > 1.0e-9:
-                nx, ny, nvx, nvy = _k_coast(nx, ny, nvx, nvy, t + h, t + dt, resto,
+                nx, ny, nvx, nvy = _k_coast(nx, ny, nvx, nvy, t + dt_sub, t + dt, resto,
                                             *prm, R_SOI_LUNA, False)[:4]
-            h = dt
+            dt_sub = dt
         if not all(math.isfinite(v) for v in (nx, ny, nvx, nvy)):
             self._msg_fallo_integrador = "RK4 de la quema LOI no finito"
             self._fallo_integrador("quema LOI")
             return
         est.px, est.py, est.vx, est.vy = nx, ny, nvx, nvy
-        est.t = t + h
+        est.t = t + dt_sub
         self._actualizar_altitud_y_rapidez()
 
     def _fase_quema_loi(self, ctx: ContextoMision) -> None:
@@ -7390,7 +7390,7 @@ class Simulacion:
         rotación efectiva (misma convención que el dibujo de la grilla)."""
         est = self.estado
         d = (math.atan2(est.py, est.px)
-             - (math.pi / 2.0 - self._omega_rotacion * est.t))
+             - (math.pi / 2.0 - self._Omega_tierra * est.t))
         return (d + math.pi) % (2.0 * math.pi) - math.pi
 
     def _error_base_gen(self, t_quema: float):
@@ -10471,7 +10471,7 @@ class InterfazSimulacion:
         for patch in self.patches_tierra:
             patch.center = (offset_x, offset_y)
         self._dibujar_grilla_tierra(
-            np.pi / 2.0 - sim._omega_rotacion * est.t, offset_x, offset_y,
+            np.pi / 2.0 - sim._Omega_tierra * est.t, offset_x, offset_y,
             sim.config.mostrar_grilla_tierra)
         pxv, pyv = (float(v) for v in vista_xy(px_d, py_d, escala_log))
         pxv, pyv = pxv + offset_x, pyv + offset_y

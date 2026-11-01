@@ -610,10 +610,10 @@ def verificar_deorbit_sitio(mod, resultados: dict) -> bool:
         if not res["resumen"]["terminada"]:
             errores.append(f"{nombre}: no terminó (sin impacto)")
             continue
-        omega = (mod.OMEGA_T if ESCENARIOS[nombre].get("rotacion_terrestre")
+        Omega = (mod.OMEGA_T if ESCENARIOS[nombre].get("rotacion_terrestre")
                  else 0.0)
         d = (np.arctan2(ultima["py"], ultima["px"])
-             - (np.pi / 2.0 - omega * ultima["t"]) + np.pi) % (2 * np.pi) - np.pi
+             - (np.pi / 2.0 - Omega * ultima["t"]) + np.pi) % (2 * np.pi) - np.pi
         km = abs(float(d)) * mod.R_T / 1000.0
         print(f"[deorbit_sitio] {nombre}: cae a {km:.2f} km de la base")
         if km > tope:
@@ -1263,7 +1263,7 @@ def _estado_eci(mod, sim):
         return (est.px + lx, est.py + ly), (est.vx + lvx, est.vy + lvy)
     theta = sim._angulo_marco_rotante()
     r_in, v_in = mod._rotante_a_inercial((est.px, est.py), (est.vx, est.vy),
-                                         est.crucero_omega, theta)
+                                         est.crucero_Omega, theta)
     mu = mod.RAZON_MASA_TL
     return ((r_in[0] + mu * lx, r_in[1] + mu * ly),
             (v_in[0] + mu * lvx, v_in[1] + mu * lvy))
@@ -1305,7 +1305,7 @@ def verificar_transiciones_v12(archivo: str) -> bool:
         a_ = e.crucero_a
         x_l = (1.0 - mod.RAZON_MASA_TL) * a_
         return mod._rotante_a_inercial((e.px - x_l, e.py), (e.vx, e.vy),
-                                       e.crucero_omega, s._angulo_marco_rotante())
+                                       e.crucero_Omega, s._angulo_marco_rotante())
     peor_eci = [0.0, 0.0]
     peor_rel = [0.0, 0.0]
     for destino, nombre in (("crucero", "tierra->crucero"), ("luna", "crucero->luna"),
@@ -1405,7 +1405,7 @@ def verificar_transiciones_v12(archivo: str) -> bool:
         g = lambda t, y, *ar: mod.R_SOI_LUNA - math.hypot(y[0] - x_l, y[1])
         g.terminal, g.direction = True, 1.0
         rf = _ivp(mod.derivadas_crtbp_rotante, (0.0, 3e5),
-                  [er.px, er.py, er.vx, er.vy], args=(er.crucero_omega, a_),
+                  [er.px, er.py, er.vx, er.vy], args=(er.crucero_Omega, a_),
                   method="DOP853", rtol=1e-13, atol=1e-9, events=g)
         t_ref2 = t_c + float(rf.t_events[0][0])
         t_ev2 = reg2[1][1]

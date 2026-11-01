@@ -55,10 +55,17 @@ La casilla de la GUI «Lunar: usar SPICE» marcada elige `spice`; desmarcada eli
 `tests/regresion_ref.json` (solo comparable entre la misma plataforma y versiones de bibliotecas; la referencia
 actual se generó en Windows).
 
-## Notación (revisión contra los apuntes del curso de Mecánica Celeste)
-La física y las fórmulas (Laplace, M.A.R.E., E.R.E., Kepler, CRTBP, Standish) coinciden con los apuntes. Se aplicó solo lo
-barato y sin riesgo: `MU_MASA_TL` → `RAZON_MASA_TL` (adimensional, no es un GM), `MU_TOTAL_TL` → `MU_SISTEMA_TL`, se borró
-`M_T` (sin uso) y se documentó que `omega` de `_elementos_orbitales` es la longitud del periapsis en 2D y que
-`_ELEM_PLANETAS` usa la convención de Standish. Pendiente (no hecho, por riesgo/beneficio en un archivo de ~11 000 líneas):
-separar `h` (altitud / paso / M.A.R.E.) y los tres `omega`; si se añade el virial, usar `E_total` para no chocar con la
-anomalía excéntrica `E`.
+## Notación (alineada con los apuntes del curso de Mecánica Celeste)
+La física y las fórmulas (Laplace, M.A.R.E., E.R.E., Kepler, CRTBP, Standish) ya coincidían con los apuntes; se unificaron los nombres:
+- `h` queda solo para el M.A.R.E. (`Lz` → `h` en `_elementos_orbitales`; `_conica_selenocentrica` ya usaba `h`).
+  La altitud pasa a `alt` (`fuerza_arrastre`, `fuerzas_congeladas`, `derivadas_v12`), el paso de integración a `dt`
+  (`_rk4_kernel`, `_herm_*`, `_k_coast`, `_k_quema`, `_estado_pymcel`, ...) y el subpaso de la quema LOI a `dt_sub`.
+  Los `h00, h10, h01, h11` de Hermite se conservan (notación estándar de la base).
+- `omega` (ω, minúscula) es solo el argumento/longitud del periapsis (`_elementos_orbitales`, 2D con Ω=0).
+  La velocidad angular pasa a `Omega` (Ω): `crucero_omega` → `crucero_Omega`, `_omega_rotacion` → `_Omega_tierra`,
+  `LeyV12.Omega` y los parámetros de `derivadas_crtbp_rotante`, `_cross_z`, etc. `OMEGA_T` (Ω_⊕) no cambia.
+- `MU_MASA_TL` → `RAZON_MASA_TL` (adimensional), `MU_TOTAL_TL` → `MU_SISTEMA_TL`, se borró `M_T`.
+- `_ELEM_PLANETAS` usa la convención de Standish (a, e, i, L, ϖ, Ω) con ϖ = Ω + ω; no es intercambiable con `omega` de 2D.
+- Si se añade el virial, usar `E_total` para no chocar con la anomalía excéntrica `E`.
+
+Verificado: pytest (38 + 1 omitida) y la regresión completa (EXIT=0, mismos resultados contra la referencia).
