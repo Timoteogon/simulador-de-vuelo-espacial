@@ -105,6 +105,14 @@ Cambios de 11.21.1 (endurecimiento; sin cambio de arquitectura):
   - Esta sección: limitaciones heredadas frente a las de la localización de
     eventos. Nada de la física cambia salvo lo del corte indicado arriba.
 
+Cambios de 12.13.9 (robustez ante estados no finitos; el vuelo nominal no cambia):
+  - `_estado_integrado_valido`: tras integrar (marco tierra y zonas crucero/luna) un estado con
+    NaN/Inf detiene la simulación como fallo del integrador, en el último estado válido.
+  - `_elementos_orbitales` lanza ValueError ante un estado no finito; `_corte_por_estado` y
+    `_margen_corte` (evaluados dentro de solve_ivp) lo tratan como "sin corte".
+  - `_z_luna` solo silencia ValueError/OSError/RuntimeError; un TypeError/AttributeError sube.
+  - Inicializa `_error_refresco_visto` en el constructor de la GUI.
+
 Cambios de 12.13.8 (efemérides lunares; el vuelo no cambia):
   - Los archivos del informe de validación Horizons+Verlet ya no llevan versión en el nombre:
     `validacion_horizons_verlet.json` y `validar_horizons_verlet.py` (el informe sigue atado al
@@ -2675,6 +2683,10 @@ def _elementos_orbitales(px: float, py: float, vx: float, vy: float) -> dict:
     Standish (a, e, i, L, ϖ, Ω) con ϖ = Ω + ω: no son intercambiables directamente.
         es_elipse           : True si la trayectoria es una elipse cerrada
     """
+    if not (math.isfinite(px) and math.isfinite(py)
+            and math.isfinite(vx) and math.isfinite(vy)):
+        raise ValueError(
+            f"_elementos_orbitales: estado no finito (px={px!r}, py={py!r}, vx={vx!r}, vy={vy!r})")
     r  = math.hypot(px, py)
     if r < 1.0:
         return _elementos_vacios(r)
@@ -4119,8 +4131,8 @@ class Simulacion:
             return None
         try:
             return float(f("luna", t_sim))
-        except Exception:
-            return None
+        except (ValueError, OSError, RuntimeError):   # datos/red: sin z; un TypeError o
+            return None                               # AttributeError (bug) sí debe verse
 
     def _estado_lunar(self, cuerpo: str, t_sim: float):
         (x, y), (vx, vy) = self._estado_lunar_bruto(cuerpo, t_sim)
@@ -5160,6 +5172,8 @@ class Simulacion:
         if y_fin is None:
             self._fallo_integrador("marco tierra")
             return
+        if not self._estado_integrado_valido(y_fin, "marco tierra"):
+            return
         if (etapa_encendida and empuje > 0.0
                 and self._corte_por_estado(y_fin)
                 and not self._corte_por_estado(y0)):
@@ -5264,6 +5278,8 @@ class Simulacion:
             if usa_biseccion:
                 self.stats_eventos["corte_biseccion"] += 1
         y_fin, t_emp_ef, t_imp, kind = res
+        if not self._estado_integrado_valido(y_fin, "marco tierra"):
+            return
         est.px, est.py, est.vx, est.vy = y_fin[:4]
         if etapa_encendida:
             # masa y Δv salen del estado integrado (también hasta el impacto)
@@ -5439,6 +5455,17 @@ class Simulacion:
                 fuerzas[5], fuerzas[6])
         return self._integrar_tramo(y1, t0 + t_emp, dt - t_emp, cola, 0.0)
 
+    def _estado_integrado_valido(self, y, ruta: str) -> bool:
+        """(12.13.9) Rechaza un estado no finito (NaN/Inf) producido por el integrador:
+        un subpaso que pasa casi por r = 0 lo genera sin excepción y, sin esta guarda,
+        el NaN se propagaba (NaN < 0 es False: el impacto nunca se detectaba). Si no es
+        finito termina la simulación en el último estado válido, como cualquier fallo."""
+        if all(math.isfinite(float(v)) for v in tuple(y)[:4]):
+            return True
+        self._msg_fallo_integrador = "el integrador produjo un estado no finito"
+        self._fallo_integrador(ruta)
+        return False
+
     def _fallo_integrador(self, ruta: str) -> None:
         """Termina la simulación de forma controlada si el integrador no
         convergió: el estado queda en el último paso válido (ni t ni el
@@ -5474,7 +5501,7 @@ class Simulacion:
         cfg = self.config
         px, py, vx, vy = y[:4]
         r = math.hypot(px, py)
-        if r < 1.0:
+        if not (r >= 1.0 and math.isfinite(vx + vy)):   # NaN/Inf de un subpaso de prueba
             return False
         orb = elementos_orbitales(px, py, vx, vy)
         if self._lunar and est.fase == "quema_tli":
@@ -5522,7 +5549,7 @@ class Simulacion:
         cfg = self.config
         px, py, vx, vy = y[0], y[1], y[2], y[3]
         r = math.hypot(px, py)
-        if r < 1.0:
+        if not (r >= 1.0 and math.isfinite(vx + vy)):   # NaN/Inf de un subpaso de prueba
             return -1.0
         orb = elementos_orbitales(px, py, vx, vy)
         if self._lunar and est.fase == "quema_tli":
@@ -5705,6 +5732,8 @@ class Simulacion:
         if not sol.success:
             self._msg_fallo_integrador = str(sol.message)
             self._fallo_integrador(ruta)
+            return
+        if not self._estado_integrado_valido(sol.y[:4, -1], ruta):
             return
         est.px, est.py, est.vx, est.vy = (float(sol.y[i, -1]) for i in range(4))
         est.speed = math.hypot(est.vx, est.vy)
@@ -6339,7 +6368,7 @@ class Simulacion:
             dt = cfg.DT_COAST_LUNAR
             resta = self._lunar_plan["t_encendido"] - est.t
             if resta < dt:
-                dt = max(resta, 1.0e-6)
+                dt = max(resta, 1.0e-6)   # (resta<=0: el paso mínimo basta para activar la fase)
         elif est.fase == "quema_loi":
             dt = self._dt_base
         elif est.fase in ("translunar", "orbita_lunar"):
@@ -8737,6 +8766,7 @@ class InterfazSimulacion:
         self.sim: Optional[Simulacion] = None
         self._after_id: Optional[str] = None
         self._planificador: Optional[PlanificadorDeorbitExterno] = None
+        self._error_refresco_visto = False
         self._t_drawer: float = float("-inf")
 
         self.camara_libre = {"activa": False}
