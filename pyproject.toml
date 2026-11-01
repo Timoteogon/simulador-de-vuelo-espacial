@@ -4,15 +4,21 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "simulador-de-vuelo-espacial"
-version = "0.1.0"
-description = "Simulador educativo de trayectorias de cohetes en Python"
+version = "12.13.8"
+description = "Simulador de trayectorias de cohetes de dos etapas en Python (ascenso, órbita, TLI, escape, desórbita y vuelo lunar)"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [{ name = "Mateo Chavarria Gonzalez" }]
 dependencies = [
-    "numpy>=1.24",
-    "matplotlib>=3.7",
+    "numpy>=2.5.3",
+    "scipy>=1.18.1",
+    "matplotlib>=3.11.2",
+    "numba>=0.68.0",
+    "astropy>=8.0.1",
+    "spiceypy>=8.2.0",
+    "pymcel>=0.9.25",
+    "rebound>=4.0",
 ]
 
 [project.optional-dependencies]

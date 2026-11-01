@@ -30,3 +30,8 @@ htmlcov/
 # Sistema operativo
 .DS_Store
 Thumbs.db
+
+# Datos que descarga o genera el simulador al ejecutarse
+pymcel/
+efemerides_cache.json
+validacion_horizons_verlet.json
