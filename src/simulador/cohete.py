@@ -889,7 +889,6 @@ from spiceypy import SpiceyError
 from pymcel.constantes import (mu_earth as MU_T, R_earth as R_T,
                                mu_sun as MU_SOL, mu_moon as MU_LUNA)
 G_CONST = 6.674e-11              # solo de referencia
-M_T     = MU_T / G_CONST         # solo de referencia
 G0 = 9.80665
 R_LUNA = 1_737_400.0  # radio físico de la Luna (m), solo para dibujar
 OMEGA_T = 7.2921159e-5  # rotación sideral de la Tierra [rad/s]
@@ -1960,8 +1959,8 @@ def _leer_validacion_horizons_verlet(fecha_iso: str):
 # `usar_marco_movil=True` Y la nave efectivamente llega a esas
 # distancias (por ahora, solo alcanzable a mano/con pruebas).
 
-MU_TOTAL_TL = MU_T + MU_LUNA
-MU_MASA_TL  = MU_LUNA / MU_TOTAL_TL           # parámetro de masa CRTBP (~0.0122)
+MU_SISTEMA_TL = MU_T + MU_LUNA                 # G(m_T+m_L) [m^3/s^2], parámetro gravitacional de 2 cuerpos
+RAZON_MASA_TL = MU_LUNA / MU_SISTEMA_TL         # ADIMENSIONAL: m_L/(m_T+m_L) del CRTBP (~0.0122); no es un GM
 _A_LUNA_REF = CUERPOS["luna"].a_ref           # semieje de referencia Tierra-Luna
 R_SOI_LUNA  = radio_soi("luna")               # ~66,170 km
 R_HILL_LUNA = radio_hill("luna")               # ~61,530 km (solo HUD)
@@ -2084,7 +2083,7 @@ def puntos_lagrange_crtbp():
     MEDIA (x) y perpendicular a ella (y). Solo para overlay visual —
     ver limitaciones arriba.
     """
-    mu = MU_MASA_TL
+    mu = RAZON_MASA_TL
     x1 = _lagrange_colineal(-1, mu) * _A_LUNA_REF
     x2 = _lagrange_colineal(1, mu) * _A_LUNA_REF
     x3 = _lagrange_colineal(2, mu) * _A_LUNA_REF
@@ -2671,6 +2670,9 @@ def _elementos_orbitales(px: float, py: float, vx: float, vy: float) -> dict:
         rp, ra              : periapsis/apoapsis como ALTITUD sobre la superficie (m)
         rp_radio, ra_radio  : mismas distancias desde el centro (m)
         a, b, c, omega      : parámetros de la elipse (NaN si no es cerrada)
+    Notación: `omega` es la LONGITUD del periapsis en 2D (≡ argumento del periapsis porque Ω=0);
+    `Lz` es el M.A.R.E. h = |r×v| (en 2D h ≡ h_z). `_ELEM_PLANETAS` usa en cambio la convención de
+    Standish (a, e, i, L, ϖ, Ω) con ϖ = Ω + ω: no son intercambiables directamente.
         es_elipse           : True si la trayectoria es una elipse cerrada
     """
     r  = math.hypot(px, py)
@@ -2990,8 +2992,8 @@ def derivadas_crtbp_rotante(t, y, omega, a, fuerza_x=0.0, fuerza_y=0.0, masa=1.0
     antes de integrarlo aquí.
     """
     x, yv, vx, vy = y
-    x1, y1 = -MU_MASA_TL * a, 0.0
-    x2, y2 = (1.0 - MU_MASA_TL) * a, 0.0
+    x1, y1 = -RAZON_MASA_TL * a, 0.0
+    x2, y2 = (1.0 - RAZON_MASA_TL) * a, 0.0
     r1 = math.hypot(x - x1, yv - y1)
     r2 = math.hypot(x - x2, yv - y2)
     ax = (2 * omega * vy + omega ** 2 * x
@@ -4852,7 +4854,7 @@ class Simulacion:
         if self.config.marco_vista != "baricentro":
             return 0.0, 0.0
         luna_x, luna_y = self._posicion_cuerpo("luna", self.estado.t)
-        return MU_MASA_TL * luna_x, MU_MASA_TL * luna_y
+        return RAZON_MASA_TL * luna_x, RAZON_MASA_TL * luna_y
 
     def offset_vista(self, escala_log: bool) -> Vec2:
         """Vector que se SUMA a las coordenadas de vista (ECI, ya con
@@ -4886,7 +4888,7 @@ class Simulacion:
         # "crucero": rotar de vuelta a orientación inercial y sumar
         # la posición del baricentro relativa a la Tierra.
         theta = self._angulo_marco_rotante()
-        bary_x, bary_y = MU_MASA_TL * luna_x, MU_MASA_TL * luna_y
+        bary_x, bary_y = RAZON_MASA_TL * luna_x, RAZON_MASA_TL * luna_y
         r_inercial = _rot2d((est.px, est.py), theta)
         return r_inercial[0] + bary_x, r_inercial[1] + bary_y
 
@@ -4915,10 +4917,10 @@ class Simulacion:
             return
         (luna_x, luna_y), (luna_vx, luna_vy) = self._estado_cuerpo("luna", est.t)
         a = math.hypot(luna_x, luna_y)
-        omega = math.sqrt(MU_TOTAL_TL / a ** 3)
+        omega = math.sqrt(MU_SISTEMA_TL / a ** 3)
         theta0 = float(np.arctan2(luna_y, luna_x))
-        bary_x, bary_y = MU_MASA_TL * luna_x, MU_MASA_TL * luna_y
-        bary_vx, bary_vy = MU_MASA_TL * luna_vx, MU_MASA_TL * luna_vy
+        bary_x, bary_y = RAZON_MASA_TL * luna_x, RAZON_MASA_TL * luna_y
+        bary_vx, bary_vy = RAZON_MASA_TL * luna_vx, RAZON_MASA_TL * luna_vy
         r_rot, v_rot = _inercial_a_rotante(
             (est.px - bary_x, est.py - bary_y),
             (est.vx - bary_vx, est.vy - bary_vy),
@@ -4937,8 +4939,8 @@ class Simulacion:
         `destino` (12.2.0): "luna" o "tierra" si el cruce ya se localizó."""
         est = self.estado
         theta = self._angulo_marco_rotante()
-        x_luna_rot = (1.0 - MU_MASA_TL) * est.crucero_a
-        x_tierra_rot = -MU_MASA_TL * est.crucero_a
+        x_luna_rot = (1.0 - RAZON_MASA_TL) * est.crucero_a
+        x_tierra_rot = -RAZON_MASA_TL * est.crucero_a
         d_luna = math.hypot(est.px - x_luna_rot, est.py)
         d_tierra = math.hypot(est.px - x_tierra_rot, est.py)
 
@@ -4983,7 +4985,7 @@ class Simulacion:
         if d_luna <= R_SOI_LUNA * 1.05 and not forzar:
             return
         theta = self._angulo_marco_rotante()
-        x_luna_rot = (1.0 - MU_MASA_TL) * est.crucero_a
+        x_luna_rot = (1.0 - RAZON_MASA_TL) * est.crucero_a
         dr_rot, dv_rot = _inercial_a_rotante(
             (est.px, est.py), (est.vx, est.vy),
             est.crucero_omega, theta,
@@ -5004,7 +5006,7 @@ class Simulacion:
                      lambda x, y: math.hypot(x, y) - UMBRAL_TIERRA_CRUCERO)]
         if marco == "crucero":
             a = self.estado.crucero_a
-            x_l, x_t = (1.0 - MU_MASA_TL) * a, -MU_MASA_TL * a
+            x_l, x_t = (1.0 - RAZON_MASA_TL) * a, -RAZON_MASA_TL * a
             return [("luna", lambda x, y: R_SOI_LUNA - math.hypot(x - x_l, y)),
                     ("tierra", lambda x, y: UMBRAL_TIERRA_CRUCERO * 0.95
                      - math.hypot(x - x_t, y))]
@@ -10580,7 +10582,7 @@ class InterfazSimulacion:
         theta = float(np.arctan2(luna_y, luna_x))
         # (x_bari, y_bari) están medidos desde el baricentro: pasar a ECI
         # sumando la posición del baricentro respecto a la Tierra.
-        bary_x, bary_y = MU_MASA_TL * luna_x, MU_MASA_TL * luna_y
+        bary_x, bary_y = RAZON_MASA_TL * luna_x, RAZON_MASA_TL * luna_y
         for nombre, (x_bari, y_bari) in puntos_lagrange_crtbp().items():
             x_eci, y_eci = _rot2d((x_bari, y_bari), theta)
             x_eci, y_eci = (float(v) for v in

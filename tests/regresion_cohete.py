@@ -1264,7 +1264,7 @@ def _estado_eci(mod, sim):
     theta = sim._angulo_marco_rotante()
     r_in, v_in = mod._rotante_a_inercial((est.px, est.py), (est.vx, est.vy),
                                          est.crucero_omega, theta)
-    mu = mod.MU_MASA_TL
+    mu = mod.RAZON_MASA_TL
     return ((r_in[0] + mu * lx, r_in[1] + mu * ly),
             (v_in[0] + mu * lvx, v_in[1] + mu * lvy))
 
@@ -1303,7 +1303,7 @@ def verificar_transiciones_v12(archivo: str) -> bool:
         if e.marco == "luna":
             return (e.px, e.py), (e.vx, e.vy)
         a_ = e.crucero_a
-        x_l = (1.0 - mod.MU_MASA_TL) * a_
+        x_l = (1.0 - mod.RAZON_MASA_TL) * a_
         return mod._rotante_a_inercial((e.px - x_l, e.py), (e.vx, e.vy),
                                        e.crucero_omega, s._angulo_marco_rotante())
     peor_eci = [0.0, 0.0]
@@ -1401,7 +1401,7 @@ def verificar_transiciones_v12(archivo: str) -> bool:
             s_ref._transicion_desde_tierra(forzar=True)
         er = s_ref.estado
         a_ = er.crucero_a
-        x_l = (1.0 - mod.MU_MASA_TL) * a_
+        x_l = (1.0 - mod.RAZON_MASA_TL) * a_
         g = lambda t, y, *ar: mod.R_SOI_LUNA - math.hypot(y[0] - x_l, y[1])
         g.terminal, g.direction = True, 1.0
         rf = _ivp(mod.derivadas_crtbp_rotante, (0.0, 3e5),

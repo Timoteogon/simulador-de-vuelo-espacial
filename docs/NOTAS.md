@@ -54,3 +54,11 @@ La casilla de la GUI «Lunar: usar SPICE» marcada elige `spice`; desmarcada eli
 `pytest -q tests/test_cohete.py`: 38 pruebas + 1 opcional. `python tests/regresion_cohete.py` compara con
 `tests/regresion_ref.json` (solo comparable entre la misma plataforma y versiones de bibliotecas; la referencia
 actual se generó en Windows).
+
+## Notación (revisión contra los apuntes del curso de Mecánica Celeste)
+La física y las fórmulas (Laplace, M.A.R.E., E.R.E., Kepler, CRTBP, Standish) coinciden con los apuntes. Se aplicó solo lo
+barato y sin riesgo: `MU_MASA_TL` → `RAZON_MASA_TL` (adimensional, no es un GM), `MU_TOTAL_TL` → `MU_SISTEMA_TL`, se borró
+`M_T` (sin uso) y se documentó que `omega` de `_elementos_orbitales` es la longitud del periapsis en 2D y que
+`_ELEM_PLANETAS` usa la convención de Standish. Pendiente (no hecho, por riesgo/beneficio en un archivo de ~11 000 líneas):
+separar `h` (altitud / paso / M.A.R.E.) y los tres `omega`; si se añade el virial, usar `E_total` para no chocar con la
+anomalía excéntrica `E`.
