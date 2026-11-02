@@ -912,3 +912,134 @@ def test_validar_config_cubre_todos_los_campos_bool(mod):
         setattr(cfg, nombre, "false")
         with pytest.raises(ValueError, match=nombre):
             cfg._validar_config()
+
+
+# --- Capa de cuerpos del mapa (12.14.0) ----------------------------------------------
+
+def _jd_2026(mod, fecha="2026-01-01T00:00:00"):
+    return mod._JD_2000_ENE_1 + mod._epoca_a_segundos(fecha) / 86400.0
+
+
+def test_vista_lineal_por_defecto_y_capa_de_cuerpos_activa(mod):
+    cfg = mod.Config()
+    assert cfg.escala_log is False and cfg.mostrar_cuerpos is True
+
+
+def test_posiciones_cuerpos_geo_son_las_reales(mod):
+    pos = mod.posiciones_cuerpos_geo(_jd_2026(mod))
+    assert set(pos) == {"sol", *[c for c, *_ in mod.PLANETAS_MAPA]}
+    ua = mod._UA
+    sx, sy = pos["sol"]
+    assert 0.98 * ua < math.hypot(sx, sy) < 1.02 * ua                 # el Sol está a ~1 UA de la Tierra
+    for clave, (a_min, a_max) in {"jupiter": (4.9, 5.5), "saturno": (9.0, 10.1), "neptuno": (29.5, 30.5),
+                                  "venus": (0.70, 0.74)}.items():
+        x, y = pos[clave]
+        r_helio = math.hypot(x - sx, y - sy) / ua                     # geo(planeta) - geo(Sol) = heliocéntrico (2D)
+        assert a_min < r_helio < a_max, (clave, r_helio)
+
+
+def test_posiciones_cuerpos_geo_fuera_de_standish_devuelve_vacio(mod):
+    assert mod.posiciones_cuerpos_geo(2300000.0) == {}               # antes de 1800
+    assert mod.posiciones_cuerpos_geo(2500000.0) == {}               # después de 2050
+
+
+def test_en_vista_y_seleccion_de_etiquetas(mod):
+    assert mod.en_vista(0.0, 0.0, (-1, 1), (-1, 1)) is True
+    assert mod.en_vista(2.0, 0.0, (-1, 1), (-1, 1)) is False
+    assert mod.en_vista(1.05, 0.0, (-1, 1), (-1, 1), margen=0.05) is True
+    items = [("a", 1, 0.0, 0.0), ("b", 0, 10.0, 0.0), ("c", 2, 100.0, 0.0)]
+    # b (prioridad 0) gana a a (10 px, se tapan); c queda lejos
+    assert mod.seleccionar_etiquetas(items, 40.0) == {"b", "c"}
+    assert mod.seleccionar_etiquetas(items, 5.0) == {"a", "b", "c"}
+
+
+def _gui_con_ejes_reales(mod):
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from unittest.mock import MagicMock
+    h = object.__new__(mod.InterfazSimulacion)
+    fig = Figure(figsize=(6, 6)); FigureCanvasAgg(fig)
+    h.fig, h.ax = fig, fig.add_subplot(111)
+    h.ax.set_aspect("equal")
+    h.canvas, h.camara_libre = MagicMock(), {"activa": False}
+    h._crear_artistas_tierra(); h._crear_artistas_trayectoria(); h._crear_artistas_luna_y_hud()
+    return h
+
+
+def _luna_vista(mod, sim, log):
+    x, y = sim._posicion_cuerpo("luna", sim.estado.t)
+    xv, yv = (float(v) for v in mod.vista_xy(x, y, log))
+    return {"x": x, "y": y, "xv": xv, "yv": yv, "radio_vista": mod.vista_tam(mod.R_LUNA, log)}
+
+
+def test_capa_de_cuerpos_culling_y_nivel_de_detalle_segun_el_zoom(mod):
+    h = _gui_con_ejes_reales(mod)
+    sim = mod.Simulacion(mod.Config())
+    h._calcular_cuerpos(sim, False, (0.0, 0.0), _luna_vista(mod, sim, False))
+    assert {c["clave"] for c in h._cuerpos_vista} == {"tierra", "luna", "sol",
+                                                      *[c for c, *_ in mod.PLANETAS_MAPA]}
+
+    def visibles(tipo):
+        i = 0 if tipo == "marcador" else 1
+        return {k for k, par in h.artistas_cuerpos.items() if par[i].get_visible()}
+
+    # Cerca de la Tierra (±20 000 km): disco real grande, sin marcadores, nada más a la vista.
+    h.ax.set_xlim(-2e7, 2e7); h.ax.set_ylim(-2e7, 2e7); h._pintar_cuerpos()
+    assert visibles("marcador") == set() and visibles("etiqueta") == {"tierra"}
+    # Sistema solar entero: Tierra y Luna son puntos (marcador) y los planetas existen.
+    h._encuadrar_sistema_solar()
+    assert "tierra" in visibles("marcador") and "neptuno" in visibles("marcador")
+    assert "sol" in visibles("etiqueta") and "neptuno" in visibles("etiqueta")
+    assert h.camara_libre["activa"] is True
+    # Culling: a ±1e9 m solo quedan Tierra y Luna.
+    h.ax.set_xlim(-1e9, 1e9); h.ax.set_ylim(-1e9, 1e9); h._pintar_cuerpos()
+    assert visibles("etiqueta") <= {"tierra", "luna"} and "neptuno" not in visibles("marcador")
+
+
+def test_capa_de_cuerpos_apagada_o_sin_simulacion_no_dibuja(mod):
+    h = _gui_con_ejes_reales(mod)
+    sim = mod.Simulacion(mod.Config())
+    h._calcular_cuerpos(sim, False, (0.0, 0.0), _luna_vista(mod, sim, False))
+    h._encuadrar_sistema_solar()
+    sim.config.mostrar_cuerpos = False
+    h._calcular_cuerpos(sim, False, (0.0, 0.0), _luna_vista(mod, sim, False))
+    h._pintar_cuerpos()
+    assert not any(a.get_visible() for par in h.artistas_cuerpos.values() for a in par)
+    h._ocultar_cuerpos()          # idempotente
+
+
+def test_capa_de_cuerpos_en_escala_log_los_planetas_caben_cerca(mod):
+    h = _gui_con_ejes_reales(mod)
+    sim = mod.Simulacion(mod.Config())
+    h._calcular_cuerpos(sim, True, (0.0, 0.0), _luna_vista(mod, sim, True))
+    r_max = max(math.hypot(c["x"], c["y"]) for c in h._cuerpos_vista)
+    assert r_max < 16 * mod.R_T          # Neptuno comprimido a ~14 R_T
+
+
+def test_longitud_ecliptica_del_sol_en_equinoccios_y_solsticios(mod):
+    # Sanidad de marco y época: la longitud del Sol medida desde el equinoxio J2000 va ~0,36° por
+    # debajo de la «de la fecha» por la precesión desde 2000 (de ahí 359,6° y no 0° en el equinoccio).
+    for fecha, esperado in (("2026-03-20T15:00:00", 0.0), ("2026-06-21T08:00:00", 90.0),
+                            ("2026-09-23T00:00:00", 180.0), ("2026-12-21T20:00:00", 270.0)):
+        x, y = mod.posiciones_cuerpos_geo(_jd_2026(mod, fecha))["sol"]
+        lon = math.degrees(math.atan2(y, x)) % 360.0
+        dif = (lon - esperado + 180.0) % 360.0 - 180.0
+        assert abs(dif) < 0.6, (fecha, lon)
+
+
+def test_calcular_cuerpos_aplica_el_marco_de_lanzamiento_en_modo_lunar(mod):
+    h = _gui_con_ejes_reales(mod)
+    sim = SimpleNamespace(
+        _lunar=True, _a_marco_lanzamiento=lambda x, y: (-x, y),
+        config=SimpleNamespace(mostrar_cuerpos=True, fecha_lanzamiento="2026-01-01T00:00:00"),
+        estado=SimpleNamespace(t=0.0))
+    luna = {"x": 0.0, "y": 0.0, "xv": 0.0, "yv": 0.0, "radio_vista": 1.0}
+    h._calcular_cuerpos(sim, False, (0.0, 0.0), luna)
+    sol_vista = next(c for c in h._cuerpos_vista if c["clave"] == "sol")
+    sx, sy = mod.posiciones_cuerpos_geo(_jd_2026(mod))["sol"]
+    assert (sol_vista["x"], sol_vista["y"]) == pytest.approx((-sx, sy))
+    sim._lunar = False
+    h._cuerpos_cache = (None, {})
+    h._calcular_cuerpos(sim, False, (0.0, 0.0), luna)
+    sol_vista = next(c for c in h._cuerpos_vista if c["clave"] == "sol")
+    assert (sol_vista["x"], sol_vista["y"]) == pytest.approx((sx, sy))

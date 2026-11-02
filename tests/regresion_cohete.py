@@ -3021,7 +3021,7 @@ def verificar_robustez_1284(archivo: str) -> bool:
     g.config = mod.Config()
     g.var_modo = MagicMock(); g.var_modo.get.return_value = "satelital"
     g.var_perfil = MagicMock(); g.var_perfil.get.return_value = "bcb"
-    for nom in ("var_crtbp", "var_cutoff_subor", "var_escala_log", "var_grilla", "var_vista_bari", "var_rotacion"):
+    for nom in ("var_crtbp", "var_cutoff_subor", "var_escala_log", "var_grilla", "var_vista_bari", "var_rotacion", "var_cuerpos"):
         setattr(g, nom, MagicMock())
     msgs = []
     g._mostrar_error = msgs.append
@@ -3107,7 +3107,7 @@ def verificar_robustez_1291(archivo: str) -> bool:
     g.config = mod.Config()
     g.var_modo = MagicMock(); g.var_modo.get.return_value = "suborbital"
     g.var_perfil = MagicMock(); g.var_perfil.get.return_value = "directo"
-    for nom in ("var_crtbp", "var_cutoff_subor", "var_escala_log", "var_grilla", "var_vista_bari", "var_rotacion"):
+    for nom in ("var_crtbp", "var_cutoff_subor", "var_escala_log", "var_grilla", "var_vista_bari", "var_rotacion", "var_cuerpos"):
         setattr(g, nom, MagicMock())
     msgs = []
     g._mostrar_error = msgs.append
