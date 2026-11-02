@@ -4,6 +4,15 @@ Desde 12.13.8 el motor vive en un único archivo, `src/simulador/cohete.py`, sin
 La versión se lleva en `pyproject.toml`, `simulador.__version__`, el encabezado de cambios de `cohete.py`
 y los mensajes de commit. Las notas por versión anteriores (hasta 12.13.6) no se incluyen aquí.
 
+## 12.14.0 — escalas: Sol y planetas en el mapa
+- Vista lineal real por defecto; alternable con la escala logarítmica (casilla). En lineal, al alejar el zoom (o con la tecla **S**) se ve el sistema
+  solar a escala (Neptuno a ~4,5·10¹² m); en log todo cabe en ~15 R_T.
+- Los cuerpos son marcadores de tamaño fijo en píxeles con etiquetas por prioridad (Sol y Tierra > Luna > gigantes > interiores); lo que cae fuera de la vista no se dibuja.
+- Posiciones de Standish recalculadas cada 600 s simulados; la proyección, en cada fotograma y al hacer zoom/arrastre. En modo lunar se aplica `_a_marco_lanzamiento`, igual que a la Luna y al Sol.
+- Comprobado: la longitud eclíptica del Sol coincide con equinoccios y solsticios (con ~0,36° de precesión respecto de la fecha, por ser J2000).
+- No verificado aquí: el encaje con el Sol de SPICE y el modo lunar con efemérides reales (sin red en el entorno de desarrollo); el respaldo Kepler del motor no sirve de referencia (no tiene fase real).
+- Diferencias de Standish respecto de la efeméride real: arcominutos, de sobra para dibujar; `Tierra` en Standish es el baricentro Tierra-Luna (~4 700 km).
+
 ## 12.13.12 — cierre de la tercera revisión
 - La validación de booleanos recorre los campos del dataclass (incluye `cd_vs_mach` y `rotacion_terrestre`, que se habían quedado fuera).
 - Contrato de `_throttle` corregido (`_throttle_g_limit` puede devolver menos que THROTTLE_MIN con un G_MAX_TRIPULADA muy bajo).

@@ -182,7 +182,7 @@ py -m simulador
 Alternativamente, sin instalar el paquete: `py .\src\simulador\cohete.py`
 ```
 
-La ejecución abre la interfaz gráfica Tkinter. Desde ella se selecciona el modo de misión, el perfil, los parámetros de lanzamiento y las opciones de visualización.
+La ejecución abre la interfaz gráfica Tkinter. En el mapa: rueda = zoom, arrastrar = mover, `F` = seguir la nave, `S` = ver el sistema solar completo, `E` = exportar. La vista es lineal por defecto; la casilla «Escala logarítmica» la comprime para ver nave, Luna y planetas juntos. Desde ella se selecciona el modo de misión, el perfil, los parámetros de lanzamiento y las opciones de visualización.
 
 ### Ejecución de pruebas
 
