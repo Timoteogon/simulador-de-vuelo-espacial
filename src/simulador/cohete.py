@@ -105,6 +105,15 @@ Cambios de 11.21.1 (endurecimiento; sin cambio de arquitectura):
   - Esta sección: limitaciones heredadas frente a las de la localización de
     eventos. Nada de la física cambia salvo lo del corte indicado arriba.
 
+Cambios de 12.14.0 (capa de cuerpos del mapa; solo dibujo, la física no cambia):
+  - Sol y planetas (Standish, geocéntricos, eclíptica J2000) como marcadores de tamaño fijo en píxeles
+    con etiqueta: la posición es real, solo el símbolo es artificial (como el "planet scale" de Stellarium).
+    Culling por los límites de la vista y etiquetas por prioridad sin solaparse; la Tierra y la Luna usan su
+    disco real si es grande y un marcador si es diminuto. Se actualiza también al hacer zoom o arrastrar.
+  - La vista es LINEAL por defecto (`escala_log=False`); la casilla de la GUI alterna con la logarítmica.
+    Nueva casilla "Mostrar Sol y planetas" (`mostrar_cuerpos`) y tecla S: encuadra todo el sistema solar.
+  - Funciones puras `posiciones_cuerpos_geo`, `en_vista` y `seleccionar_etiquetas` (con pruebas).
+
 Cambios de 12.13.12 (cierre de la tercera revisión; la física no cambia):
   - `_validar_config` recorre TODOS los campos bool de Config (antes una lista a mano dejaba fuera
     `cd_vs_mach` y `rotacion_terrestre`).
@@ -2240,7 +2249,11 @@ class Config:
     # final): comprime radialmente las distancias a la Tierra y los
     # tamaños para que Tierra, Luna y nave quepan en la misma vista.
     # No afecta a la física ni a los datos guardados.
-    escala_log: bool = True
+    # (12.14.0) Por defecto la vista es LINEAL (distancias reales); la logarítmica se alterna
+    # con la casilla de la GUI.
+    escala_log: bool = False
+    # (12.14.0) Sol y planetas como marcadores de tamaño fijo en el mapa (solo dibujo).
+    mostrar_cuerpos: bool = True
 
     # Marco de VISTA (solo dibujo; la física sigue en ECI):
     #   "tierra"     -> Tierra en el origen (ECI)
@@ -8329,6 +8342,55 @@ class EfemeridesPlanetas:
 
 
 # ----------------------------------------------------------------------------
+# CAPA DE CUERPOS DEL MAPA (12.14.0): Sol y planetas como marcadores de tamaño fijo en
+# píxeles (como el "planet scale" de Stellarium): la POSICIÓN es real, solo el símbolo es
+# artificial para que no desaparezca al alejar el zoom. Solo dibujo: no toca la física.
+# ----------------------------------------------------------------------------
+_JD_2000_ENE_1 = 2451544.5          # 2000-01-01 00:00 UTC: la época de `_epoca_a_segundos`
+# (clave, etiqueta, color, prioridad de la etiqueta: menor = más importante)
+PLANETAS_MAPA = (
+    ("mercurio", "Mercurio", "#b5a79a", 6), ("venus", "Venus", "#e8cda0", 4),
+    ("marte", "Marte", "#e0654a", 3), ("jupiter", "Júpiter", "#e3c79b", 2),
+    ("saturno", "Saturno", "#e6d3a1", 3), ("urano", "Urano", "#9fe3e8", 5),
+    ("neptuno", "Neptuno", "#6d8cff", 5),
+)
+
+
+def posiciones_cuerpos_geo(jd: float) -> dict:
+    """{clave: (x, y)} [m] del Sol y de los planetas (sin la Tierra), GEOCÉNTRICOS en el plano
+    eclíptico J2000, a partir de los elementos de Standish (heliocéntrico planeta − heliocéntrico
+    Tierra). Es la misma convención de las efemérides del simulador. {} si `jd` queda fuera de
+    1800–2050 (donde Standish no vale): el mapa simplemente no dibuja la capa."""
+    ef = EfemeridesPlanetas()
+    try:
+        tierra = ef.estado("tierra", jd)[0]
+        out = {"sol": (float(-tierra[0]), float(-tierra[1]))}
+        for clave, *_ in PLANETAS_MAPA:
+            p = ef.estado(clave, jd)[0]
+            out[clave] = (float(p[0] - tierra[0]), float(p[1] - tierra[1]))
+    except ValueError:
+        return {}
+    return out
+
+
+def en_vista(x: float, y: float, xlim, ylim, margen: float = 0.0) -> bool:
+    """¿(x, y) cae dentro de los límites del eje (con `margen` relativo al ancho)? Culling."""
+    mx, my = margen * (xlim[1] - xlim[0]), margen * (ylim[1] - ylim[0])
+    return (xlim[0] - mx <= x <= xlim[1] + mx) and (ylim[0] - my <= y <= ylim[1] + my)
+
+
+def seleccionar_etiquetas(items, sep_px: float) -> set:
+    """Qué etiquetas mostrar sin que se tapen: `items` = [(clave, prioridad, px, py)] con la
+    posición en PÍXELES. Se aceptan por prioridad (menor primero; a igual prioridad, por clave) y
+    una etiqueta se descarta si queda a menos de `sep_px` de otra ya aceptada."""
+    elegidas: list = []
+    for clave, _prio, px, py in sorted(items, key=lambda it: (it[1], it[0])):
+        if all(math.hypot(px - qx, py - qy) >= sep_px for _c, qx, qy in elegidas):
+            elegidas.append((clave, px, py))
+    return {c for c, _x, _y in elegidas}
+
+
+# ----------------------------------------------------------------------------
 # Lambert (Curtis, variables universales), UNA revolución, sentido prógrado (+z):
 # el ángulo de transferencia se mide en sentido antihorario desde r1 hasta r2
 # (0..2π), así que el arco es corto o largo según la geometría de las fechas;
@@ -9020,13 +9082,14 @@ class InterfazSimulacion:
 
         # Overlay opcional de puntos de Lagrange (ver Config.mostrar_crtbp)
         self.lagrange_artists = {}
+        self._crear_artistas_cuerpos()
 
         self.texto_hud = self.ax.text(
             0.02, 0.98, "", transform=self.ax.transAxes,
             va="top", ha="left", fontsize=9, color="#7fa8c9",
             family="monospace",
         )
-        self.ax.text(0.98, 0.02, "scroll: zoom   arrastrar: mover   F: seguir   E: exportar",
+        self.ax.text(0.98, 0.02, "scroll: zoom   arrastrar: mover   F: seguir   S: sistema solar   E: exportar",
                      transform=self.ax.transAxes, va="bottom", ha="right",
                      fontsize=7, color="#4a6a85")
 
@@ -9271,6 +9334,11 @@ class InterfazSimulacion:
         _crear_checkbutton(panel, "Escala logarítmica (vista)",
                            self.var_escala_log,
                            command=self._al_cambiar_escala_log).pack(anchor="w")
+
+        self.var_cuerpos = tk.BooleanVar(value=cfg.mostrar_cuerpos)
+        _crear_checkbutton(panel, "Mostrar Sol y planetas (mapa)",
+                           self.var_cuerpos,
+                           command=self._al_cambiar_cuerpos).pack(anchor="w")
 
     def _construir_etiqueta_error_y_botones(self):
         pie = self._pie_izq
@@ -9609,6 +9677,7 @@ class InterfazSimulacion:
         self.ax.set_ylim(y_cursor - (y_cursor - ylim[0]) * factor,
                          y_cursor + (ylim[1] - y_cursor) * factor)
         self.camara_libre["activa"] = True
+        self._pintar_cuerpos()
         self.canvas.draw_idle()
 
     def _on_press(self, event):
@@ -9629,6 +9698,7 @@ class InterfazSimulacion:
         self.ax.set_xlim(xlim[0] + dx, xlim[1] + dx)
         self.ax.set_ylim(ylim[0] + dy, ylim[1] + dy)
         self.camara_libre["activa"] = True
+        self._pintar_cuerpos()
         self.canvas.draw_idle()
 
     def _on_release(self, _event):
@@ -9637,6 +9707,8 @@ class InterfazSimulacion:
     def _on_key(self, event):
         if event.key == "f":
             self.camara_libre["activa"] = False
+        elif event.key == "s":
+            self._encuadrar_sistema_solar()
         elif event.key == "e":
             self._exportar_historial(".npz")
         elif event.key == "E":
@@ -9677,6 +9749,7 @@ class InterfazSimulacion:
             ("peri/apo",    [self.punto_peri, self.punto_apo]),
             ("cohete",      [self.punto_cohete]),
             ("luna",        [self.patch_luna]),
+            ("cuerpos",     [a for par in self.artistas_cuerpos.values() for a in par]),
             ("hud",         [self.texto_hud]),
             ("inset",       [self.ax_inset]),
             ("lagrange",    list(self.lagrange_artists.values())),
@@ -9843,6 +9916,15 @@ class InterfazSimulacion:
         self.camara_libre["activa"] = False
         self.canvas.draw_idle()
 
+    def _al_cambiar_cuerpos(self):
+        """Aplica la casilla de Sol y planetas en vivo (solo vista)."""
+        valor = bool(self.var_cuerpos.get())
+        self.config.mostrar_cuerpos = valor
+        if self.sim is not None:
+            self.sim.config.mostrar_cuerpos = valor
+            self._actualizar_animacion()
+        self.canvas.draw_idle()
+
     def _actualizar_visibilidad_cutoff_subor(self):
         if self.var_modo.get() == "suborbital":
             self.chk_cutoff_subor.pack(anchor="w", pady=(6, 0),
@@ -9873,6 +9955,7 @@ class InterfazSimulacion:
         cfg.mostrar_crtbp = bool(self.var_crtbp.get())
         cfg.suborbital_cutoff_por_apogeo = bool(self.var_cutoff_subor.get())
         cfg.escala_log = bool(self.var_escala_log.get())
+        cfg.mostrar_cuerpos = bool(self.var_cuerpos.get())
         cfg.mostrar_grilla_tierra = bool(self.var_grilla.get())
         cfg.marco_vista = ("baricentro" if self.var_vista_bari.get()
                            else "tierra")
@@ -10226,6 +10309,8 @@ class InterfazSimulacion:
         self.texto_hud.set_text("")
         self._ocultar_inset()
         self._borrar_puntos_lagrange()
+        self._cuerpos_vista = []
+        self._ocultar_cuerpos()
         self.patch_luna.center = (1e12, 0)
         for patch in self.patches_tierra:
             patch.center = (0, 0)
@@ -10586,6 +10671,8 @@ class InterfazSimulacion:
         if not self.camara_libre["activa"]:
             self._encuadrar_camara(sim, (px_d, py_d), (pxv, pyv), luna,
                                    (offset_x, offset_y))
+        self._calcular_cuerpos(sim, escala_log, (offset_x, offset_y), luna)
+        self._pintar_cuerpos()          # después de la cámara: usa los límites ya definitivos
 
         self._actualizar_inset(sim, (px_d, py_d), luna, (offset_x, offset_y))
         self.texto_hud.set_text(
@@ -10622,6 +10709,104 @@ class InterfazSimulacion:
             polis_g, col_g = agrupar_en_polilineas(segmentos[-n:], colores[-n:])
             self.lc_tray_glow.set_segments(polis_g)
             self.lc_tray_glow.set_color(col_g)
+
+    # --- Capa de cuerpos (12.14.0) -----------------------------------------------------
+    CUERPOS_MAPA = (("sol", "Sol", "#ffd84a", 0),) + PLANETAS_MAPA
+    CUERPOS_CACHE_S = 600.0         # posiciones de Standish: se recalculan cada 600 s simulados
+    CUERPOS_RADIO_MIN_PX = 4.0      # Tierra/Luna: bajo este radio en pantalla se dibuja un marcador
+    CUERPOS_SEPARACION_ETIQUETAS_PX = 40.0
+
+    def _crear_artistas_cuerpos(self):
+        """Un marcador y una etiqueta persistentes por cuerpo (Sol, Tierra, Luna, planetas);
+        solo se actualizan con set_data / set_position, nunca se recrean."""
+        self._cuerpos_cache = (None, {})
+        self._cuerpos_vista: list = []
+        self.artistas_cuerpos = {}
+        extra = (("tierra", "Tierra", "#4a90e0", 0), ("luna", "Luna", "#cfcfcf", 1))
+        for clave, etiqueta, color, _prio in extra + self.CUERPOS_MAPA:
+            (marcador,) = self.ax.plot([], [], "o", color=color, zorder=1.5, visible=False,
+                                       markersize=8 if clave == "sol" else 4)
+            texto = self.ax.text(0.0, 0.0, f" {etiqueta}", color=color, fontsize=7,
+                                 family="monospace", zorder=1.5, visible=False)
+            self.artistas_cuerpos[clave] = (marcador, texto)
+
+    def _calcular_cuerpos(self, sim: Simulacion, escala_log: bool, offset: Vec2, luna: dict):
+        """Posiciones de VISTA de los cuerpos (con la escala y el marco de vista actuales).
+        Las de Standish se recalculan cada CUERPOS_CACHE_S; la proyección, en cada fotograma."""
+        self._cuerpos_vista = []
+        if not sim.config.mostrar_cuerpos:
+            return
+        ox, oy = offset
+        t = sim.estado.t
+        clave_cache = (sim.config.fecha_lanzamiento, int(t // self.CUERPOS_CACHE_S))
+        if self._cuerpos_cache[0] != clave_cache:
+            jd = _JD_2000_ENE_1 + (_epoca_a_segundos(sim.config.fecha_lanzamiento) + t) / 86400.0
+            pos = posiciones_cuerpos_geo(jd)
+            if sim._lunar:                     # el modo lunar dibuja en el marco de lanzamiento
+                pos = {k: tuple(float(v) for v in sim._a_marco_lanzamiento(x, y))
+                       for k, (x, y) in pos.items()}
+            self._cuerpos_cache = (clave_cache, pos)
+        cuerpos = [
+            dict(clave="tierra", etiqueta="Tierra", prio=0, x=ox, y=oy,
+                 radio=vista_tam(R_T, escala_log)),
+            dict(clave="luna", etiqueta="Luna", prio=1, x=luna["xv"], y=luna["yv"],
+                 radio=luna["radio_vista"]),
+        ]
+        for clave, etiqueta, _color, prio in self.CUERPOS_MAPA:
+            if clave in self._cuerpos_cache[1]:
+                x, y = self._cuerpos_cache[1][clave]
+                xv, yv = (float(v) for v in vista_xy(x, y, escala_log))
+                cuerpos.append(dict(clave=clave, etiqueta=etiqueta, prio=prio,
+                                    x=xv + ox, y=yv + oy, radio=None))
+        self._cuerpos_vista = cuerpos
+
+    def _pintar_cuerpos(self):
+        """Culling y nivel de detalle según el zoom ACTUAL: fuera de la vista no se dibuja; la
+        Tierra y la Luna usan su disco real si es grande y un marcador si es diminuta; las
+        etiquetas que se taparían se descartan por prioridad. Barato: se llama también al
+        hacer zoom o arrastrar."""
+        if not self._cuerpos_vista:
+            self._ocultar_cuerpos()
+            return
+        ax = self.ax
+        xlim, ylim = ax.get_xlim(), ax.get_ylim()
+        ancho = abs(xlim[1] - xlim[0])
+        ppu = ax.bbox.width / ancho if ancho > 0.0 else 0.0     # píxeles por unidad de vista
+        dentro, items = [], []
+        for c in self._cuerpos_vista:
+            if en_vista(c["x"], c["y"], xlim, ylim):
+                dentro.append(c)
+                px, py = ax.transData.transform((c["x"], c["y"]))
+                items.append((c["clave"], c["prio"], float(px), float(py)))
+        etiquetas = seleccionar_etiquetas(items, self.CUERPOS_SEPARACION_ETIQUETAS_PX)
+        dentro_claves = {c["clave"] for c in dentro}
+        for c in self._cuerpos_vista:
+            marcador, texto = self.artistas_cuerpos[c["clave"]]
+            visible = c["clave"] in dentro_claves
+            diminuto = c["radio"] is None or c["radio"] * ppu < self.CUERPOS_RADIO_MIN_PX
+            marcador.set_data([c["x"]], [c["y"]])
+            marcador.set_visible(visible and diminuto)
+            texto.set_position((c["x"], c["y"]))
+            texto.set_visible(c["clave"] in etiquetas)
+
+    def _ocultar_cuerpos(self):
+        for marcador, texto in getattr(self, "artistas_cuerpos", {}).values():
+            marcador.set_visible(False)
+            texto.set_visible(False)
+
+    def _encuadrar_sistema_solar(self):
+        """Tecla S: encuadra todos los cuerpos de la capa, centrado en la Tierra."""
+        if not self._cuerpos_vista:
+            return
+        tierra = next(c for c in self._cuerpos_vista if c["clave"] == "tierra")
+        ext = max(max(abs(c["x"] - tierra["x"]), abs(c["y"] - tierra["y"]))
+                  for c in self._cuerpos_vista) * 1.15
+        ext = max(ext, R_T * 4.0)
+        self.ax.set_xlim(tierra["x"] - ext, tierra["x"] + ext)
+        self.ax.set_ylim(tierra["y"] - ext, tierra["y"] + ext)
+        self.camara_libre["activa"] = True
+        self._pintar_cuerpos()
+        self.canvas.draw_idle()
 
     def _dibujar_luna(self, sim: Simulacion, escala_log: bool,
                       offset_x: float, offset_y: float) -> dict:
